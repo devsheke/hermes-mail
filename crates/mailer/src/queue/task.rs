@@ -37,8 +37,8 @@ pub struct Task {
 
 pub type TaskResult = Result<Task, Error>;
 
-const DISPOSITION_HEADER: &'static str = "Disposition-Notification-To";
-const RETURN_RECEIPT_HEADER: &'static str = "Disposition-Notification-To";
+const DISPOSITION_HEADER: &str = "Disposition-Notification-To";
+const RETURN_RECEIPT_HEADER: &str = "Disposition-Notification-To";
 
 impl Task {
     pub(super) fn new(sender: Arc<Sender>, receiver: Arc<Receiver>) -> Self {
@@ -48,7 +48,7 @@ impl Task {
     fn send(self) -> TaskResult {
         let (sender, receiver, empty) =
             (&self.sender, &self.receiver, TemplateVariables::default());
-        let transport = match create_transport(&sender) {
+        let transport = match create_transport(sender) {
             Ok(t) => t,
             Err(err) => return Err(Error::TransportError { task: self, err }),
         };

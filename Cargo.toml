@@ -1,13 +1,7 @@
 [workspace]
 resolver = "2"
-members = [
-  "crates/cli", 
-  "crates/mailer",
-  "crates/csv"
-]
-default_members = [
-  "crates/cli",
-]
+members = ["crates/cli", "crates/mailer", "crates/csv"]
+default_members = ["crates/cli"]
 
 [workspace.package]
 authors = ["devsheke <abhi@sheke.tech>"]

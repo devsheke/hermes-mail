@@ -292,7 +292,7 @@ impl Reader {
     }
 
     pub fn convert_senders(
-        &mut self,
+        mut self,
         sender_map: SenderHeaderMap,
         outfile: Option<PathBuf>,
     ) -> Result<(), Box<dyn Error>> {
@@ -307,11 +307,11 @@ impl Reader {
                 }
 
                 if let Some(host) = sender_map.named_host.as_ref() {
-                    sender.host = host.clone();
+                    sender.host.clone_from(host)
                 }
 
                 if let Some(subject) = sender_map.subject.as_ref() {
-                    sender.subject = subject.clone();
+                    sender.subject.clone_from(subject)
                 }
 
                 if let Some(auth) = sender_map.auth.as_ref() {
@@ -319,15 +319,15 @@ impl Reader {
                 }
 
                 if let Some(plain) = sender_map.plain.as_ref() {
-                    sender.plain = plain.clone();
+                    sender.plain.clone_from(plain);
                 }
 
                 if let Some(html) = sender_map.html.as_ref() {
-                    sender.html = Some(html.clone());
+                    sender.html = Some(html.to_path_buf())
                 }
 
                 if let Some(rr) = sender_map.read_receipts.as_ref() {
-                    sender.read_receipt = Some(rr.clone());
+                    sender.read_receipt = Some(rr.to_string())
                 }
             }
             senders.push(sender);

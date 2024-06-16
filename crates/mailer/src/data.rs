@@ -276,9 +276,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, str::FromStr};
-
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_read_input() -> Result<(), csv::Error> {
@@ -325,12 +324,6 @@ mod tests {
             }
             .into()
         );
-
-        Ok(())
-    }
-
-    fn test_template_vars() -> Result<(), Box<dyn std::error::Error>> {
-        let test_data = fs::read_to_string("../../testdata/template_vars.txt")?;
 
         Ok(())
     }

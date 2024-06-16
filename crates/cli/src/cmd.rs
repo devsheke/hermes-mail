@@ -179,7 +179,7 @@ impl ConvertCommand {
         }
     }
 
-    fn sender_prompt(self, mut reader: Reader) -> Result<(), super::Error> {
+    fn sender_prompt(self, reader: Reader) -> Result<(), super::Error> {
         let mut map = SenderHeaderMap::new();
 
         map = map.email(

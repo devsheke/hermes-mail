@@ -320,7 +320,7 @@ impl Queue {
             Some(p) => Some(p),
             None => {
                 self.senders.remove(sender);
-                return self.pos_min_timeout(stack_size);
+                self.pos_min_timeout(stack_size)
             }
         }
     }
