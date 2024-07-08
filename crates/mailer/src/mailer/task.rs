@@ -48,7 +48,7 @@ impl Task {
         Task { sender, receiver }
     }
 
-    fn send(self, read_receipts: bool) -> TaskResult {
+    fn send_email(self, read_receipts: bool) -> TaskResult {
         let (sender, receiver, empty) =
             (&self.sender, &self.receiver, TemplateVariables::default());
 
@@ -65,7 +65,7 @@ impl Task {
             Err(err) => return Err(Error::AddressError { task: self, err }),
         };
 
-        let subject = match templates.render("subject", &sender.subject) {
+        let subject = match templates.render("subject", &variables) {
             Ok(s) => s,
             Err(err) => return Err(Error::RenderError { task: self, err }),
         };
@@ -114,7 +114,10 @@ impl Task {
             set_header(&mut msg, DISPOSITION_HEADER, sender.email.clone());
         }
 
-        let creds = Credentials::new(sender.email.clone(), sender.secret.clone());
+        let creds = Credentials::new(
+            sender.email.split_once('@').unwrap().0.to_string(),
+            sender.secret.clone(),
+        );
 
         let mailer = match SmtpTransport::starttls_relay(&sender.host) {
             Ok(m) => m
@@ -131,7 +134,7 @@ impl Task {
     }
 
     pub(super) fn spawn(self, read_receipts: bool) -> JoinHandle<TaskResult> {
-        thread::spawn(move || self.send(read_receipts))
+        thread::spawn(move || self.send_email(read_receipts))
     }
 }
 

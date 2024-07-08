@@ -3,7 +3,6 @@
 //! transport queue in order to send emails.
 
 pub mod data;
-pub mod queue;
+pub mod mailer;
 pub(crate) mod stats;
-pub(crate) mod unblock_imap;
 pub(crate) mod websocket;
