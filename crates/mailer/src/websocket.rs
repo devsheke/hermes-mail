@@ -1,7 +1,7 @@
 use futures::{future, pin_mut, stream::StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::{connect_async, tungstenite::Message as TMessage};
-use tracing::error;
+use tracing::{error, info, trace};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -15,28 +15,21 @@ pub enum SenderType {
 #[serde(rename_all = "camelCase")]
 pub enum MessageKind {
     Block,
-    LocalBlock,
-    Stop,
     Error,
-    Unblock,
     SenderStats,
+    Stop,
     TaskStats,
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct LocalBlockBody {
-    pub email: String,
-    pub amnt: usize,
+    Unblock,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
+    pub data: String,
     pub from: String,
     pub from_type: SenderType,
-    pub to: String,
     pub kind: MessageKind,
-    pub data: String,
+    pub to: String,
 }
 
 impl Message {
@@ -67,22 +60,6 @@ impl Message {
             data: email,
         }
         .send(tx)
-    }
-
-    pub fn local_block(
-        sender_id: String,
-        receiver_id: String,
-        email: String,
-        amnt: usize,
-    ) -> Result<Self, serde_json::Error> {
-        let data = serde_json::to_string(&LocalBlockBody { email, amnt })?;
-        Ok(Self {
-            from: sender_id,
-            from_type: SenderType::Instance,
-            to: receiver_id,
-            kind: MessageKind::Block,
-            data,
-        })
     }
 
     pub fn send_sender_stats(
@@ -130,6 +107,8 @@ pub async fn connect_and_listen(
     inbound_tx: crossbeam_channel::Sender<Message>,
     outbound_rx: SocketChannelReceiver,
 ) {
+    info!(msg = "establishing websocket connection");
+
     let (ws_stream, _) = connect_async(url)
         .await
         .expect("Failed to connect to WebSocket server");
@@ -141,7 +120,7 @@ pub async fn connect_and_listen(
         let data = match message {
             Ok(m) => m.into_text().unwrap_or(String::new()),
             Err(e) => {
-                error!(msg = "socket read err", err = format!("{e}"));
+                trace!(msg = "socket read err", err = format!("{e}"));
                 return;
             }
         };
@@ -163,6 +142,8 @@ pub async fn connect_and_listen(
             .send(message)
             .unwrap_or_else(|e| error!(msg = "", err = format!("{e}")));
     });
+
+    info!(msg = "successfully connected to websocket server");
 
     pin_mut!(write_stream, read_stream);
     future::select(write_stream, read_stream).await;
