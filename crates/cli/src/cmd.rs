@@ -67,24 +67,20 @@ impl ConvertCommand {
             Select::new()
                 .with_prompt("Pick field with receivers")
                 .items(&reader.headers)
-                .interact()
-                .unwrap(),
+                .interact()?,
         );
 
-        if let Some(pos) = Select::new()
-            .with_prompt("Pick field with senders (optional)")
-            .items(&reader.headers)
-            .interact_opt()
-            .unwrap()
-        {
-            map = map.sender(pos)
-        }
+        map = map.sender(
+            Select::new()
+                .with_prompt("Pick field with senders")
+                .items(&reader.headers)
+                .interact()?,
+        );
 
         if let Some(pos) = MultiSelect::new()
             .with_prompt("Pick fields with Cc (optional)")
             .items(&reader.headers)
-            .interact_opt()
-            .unwrap()
+            .interact_opt()?
         {
             map = map.cc(pos)
         }
@@ -92,8 +88,7 @@ impl ConvertCommand {
         if let Some(pos) = MultiSelect::new()
             .with_prompt("Pick fields with Bcc (optional)")
             .items(&reader.headers)
-            .interact_opt()
-            .unwrap()
+            .interact_opt()?
         {
             map = map.bcc(pos)
         }
@@ -101,8 +96,7 @@ impl ConvertCommand {
         if let Some(pos) = MultiSelect::new()
             .with_prompt("Pick fields with variables")
             .items(&reader.headers)
-            .interact_opt()
-            .unwrap()
+            .interact_opt()?
         {
             map = map.variables(pos)
         }
@@ -126,87 +120,70 @@ impl ConvertCommand {
             Select::new()
                 .with_prompt("Pick the field with senders")
                 .items(&reader.headers)
-                .interact()
-                .unwrap(),
+                .interact()?,
         );
 
         map = map.secret(
             Select::new()
                 .with_prompt("Pick the field with passwords")
                 .items(&reader.headers)
-                .interact()
-                .unwrap(),
+                .interact()?,
         );
 
         if Confirm::new()
             .with_prompt("Do you want to set the same SMTP host for all senders?")
-            .interact()
-            .unwrap()
+            .interact()?
         {
             map = map.global_host(
                 Input::new()
                     .with_prompt("SMTP host address")
-                    .interact_text()
-                    .unwrap(),
+                    .interact_text()?,
             )
         } else if let Some(host) = Select::new()
             .with_prompt("Pick the field with SMTP hosts")
             .items(&reader.headers)
-            .interact_opt()
-            .unwrap()
+            .interact_opt()?
         {
             map = map.host(host)
         }
 
         if Confirm::new()
             .with_prompt("Do you want to set the same subject for all senders?")
-            .interact()
-            .unwrap()
+            .interact()?
         {
-            map = map.global_subject(
-                Input::new()
-                    .with_prompt("Email subject")
-                    .interact_text()
-                    .unwrap(),
-            )
+            map = map.global_subject(Input::new().with_prompt("Email subject").interact_text()?)
         } else if let Some(host) = Select::new()
             .with_prompt("Pick the field with the subjects")
             .items(&reader.headers)
-            .interact_opt()
-            .unwrap()
+            .interact_opt()?
         {
             map = map.subject(host)
         }
 
         if Confirm::new()
             .with_prompt("Do you want to set the same read-receipt receiver for all senders?")
-            .interact()
-            .unwrap()
+            .interact()?
         {
             map = map.global_read_receipts(
                 Input::new()
                     .with_prompt("Read-receipt receiver email address")
-                    .interact_text()
-                    .unwrap(),
+                    .interact_text()?,
             )
         } else if let Some(read_receipts) = Select::new()
             .with_prompt("Pick the field with read-receipt receiver email addresses")
             .items(&reader.headers)
-            .interact_opt()
-            .unwrap()
+            .interact_opt()?
         {
             map = map.read_receipts(read_receipts)
         }
 
         if Confirm::new()
             .with_prompt("Do you want to set the login mechanism for all senders?")
-            .interact()
-            .unwrap()
+            .interact()?
         {
             let mechanism: String = Input::new()
                 .with_prompt("SMTP AUTH mechanism")
-                .interact_text()
-                .unwrap();
+                .interact_text()?;
             map = map.global_auth(ConvertCommand::mechanism_fromstr(&mechanism)?);
         }
 
