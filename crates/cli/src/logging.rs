@@ -36,31 +36,31 @@ pub fn init_logger(pretty: bool, level: u8) -> Result<WorkerGuard, super::StdErr
 
     if pretty {
         let indicatif_layer = IndicatifLayer::new();
-        tracing::subscriber::set_global_default(
-            subscriber
-                .with(
-                    fmt::Layer::new()
-                        .with_writer(indicatif_layer.get_stdout_writer().with_max_level(level))
-                        .pretty()
-                        .with_timer(time_format)
-                        .with_target(false)
-                        .with_line_number(false)
-                        .with_file(false),
-                )
-                .with(indicatif_layer),
-        )?
-    } else {
-        tracing::subscriber::set_global_default(
-            subscriber.with(
-                fmt::layer()
-                    .with_writer(io::stdout.with_max_level(level))
-                    .json()
+        let subscriber = subscriber
+            .with(
+                fmt::Layer::new()
+                    .with_writer(indicatif_layer.get_stdout_writer().with_max_level(level))
+                    .pretty()
                     .with_timer(time_format)
                     .with_target(false)
                     .with_line_number(false)
                     .with_file(false),
-            ),
-        )?
+            )
+            .with(indicatif_layer);
+
+        tracing::subscriber::set_global_default(subscriber)?;
+    } else {
+        let subscriber = subscriber.with(
+            fmt::Layer::new()
+                .with_writer(io::stdout.with_max_level(level))
+                .with_timer(time_format)
+                .with_target(false)
+                .with_line_number(false)
+                .with_file(false)
+                .json(),
+        );
+
+        tracing::subscriber::set_global_default(subscriber)?;
     }
 
     Ok(guard)
