@@ -2,7 +2,7 @@ use super::super::StdError;
 use hermes_csv::{Reader, ReceiverHeaderMap, SenderHeaderMap};
 use hermes_mailer::{
     data::{CodesVec, DashboardConfig},
-    queue::Builder,
+    mailer::Mailer,
 };
 use lettre::transport::smtp::authentication::Mechanism;
 use serde::Deserialize;
@@ -167,7 +167,7 @@ pub struct MailerConfig {
     pub rate: Option<i64>,
     pub daily_limit: Option<u32>,
     pub skip_weekends: Option<bool>,
-    pub skip_permanent: Option<bool>,
+    pub block_permanent: Option<bool>,
     pub save_progress: Option<bool>,
     pub skip_codes: Option<CodesVec>,
     pub read_receipts: Option<bool>,
@@ -206,7 +206,7 @@ impl Config {
             self.convert()?
         }
 
-        let mut builder = Builder::new()
+        let mut builder = Mailer::builder()
             .senders(self.mailer.senders)
             .receivers(self.mailer.receivers)
             .skip_codes(self.mailer.skip_codes.clone().unwrap_or_default());
@@ -231,14 +231,20 @@ impl Config {
             builder = builder.skip_weekends()
         }
 
-        if self.mailer.skip_permanent.unwrap_or(false) {
-            builder = builder.skip_permanent()
+        if let Some(b) = self.mailer.save_progress {
+            if b {
+                builder = builder.save_progress()
+            }
+        }
+
+        if self.mailer.block_permanent.unwrap_or(false) {
+            builder = builder.block_permanent()
         }
 
         if let Some(dash) = self.dashboard {
             builder = builder.dashboard_config(dash);
         }
 
-        builder.build()?.run().await
+        Ok(builder.build()?.run().await)
     }
 }
