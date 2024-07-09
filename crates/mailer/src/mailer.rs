@@ -331,7 +331,7 @@ impl Mailer {
                         continue;
                     }
 
-                    if is_tomorrow(self.start) && stats.today > self.daily_limit {
+                    if !is_tomorrow(self.start) && stats.today > self.daily_limit {
                         warn!(msg = "sender hit daily limit", sender = sender);
                         stats.set_timeout_if_none(Duration::try_hours(24).unwrap())
                     }
