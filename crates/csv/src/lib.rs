@@ -2,8 +2,15 @@ use hermes_mailer::data::{Receiver, Sender, TemplateVariables};
 use lettre::{message::Mailboxes, transport::smtp::authentication::Mechanism};
 use serde::Serialize;
 use std::{
-    collections::HashMap, env, error::Error, fmt::Display, fs::File, io::Read,
-    os::unix::fs::FileExt, path::PathBuf, str::FromStr,
+    collections::HashMap,
+    env,
+    error::Error,
+    fmt::Display,
+    fs::File,
+    io::Read,
+    os::unix::fs::FileExt,
+    path::{Path, PathBuf},
+    str::FromStr,
 };
 use tracing::debug;
 
@@ -94,6 +101,11 @@ impl SenderHeaderMap {
         self
     }
 
+    pub fn auth(mut self, i: usize) -> Self {
+        self.data.insert(i, "auth".into());
+        self
+    }
+
     pub fn subject(mut self, i: usize) -> Self {
         self.data.insert(i, "subject".into());
         self
@@ -101,6 +113,16 @@ impl SenderHeaderMap {
 
     pub fn read_receipts(mut self, i: usize) -> Self {
         self.data.insert(i, "read_receipts".into());
+        self
+    }
+
+    pub fn plain(mut self, i: usize) -> Self {
+        self.data.insert(i, "plain".into());
+        self
+    }
+
+    pub fn html(mut self, i: usize) -> Self {
+        self.data.insert(i, "html".into());
         self
     }
 
@@ -121,6 +143,16 @@ impl SenderHeaderMap {
 
     pub fn global_auth(mut self, mechanism: Mechanism) -> Self {
         self.auth = Some(mechanism);
+        self
+    }
+
+    pub fn global_plain(mut self, s: &Path) -> Self {
+        self.plain = Some(s.to_path_buf());
+        self
+    }
+
+    pub fn global_html(mut self, s: &Path) -> Self {
+        self.html = Some(s.to_path_buf());
         self
     }
 }
@@ -144,9 +176,13 @@ impl Reader {
         Ok(Self { rdr, headers })
     }
 
+    pub fn find_header(&self, search: &String) -> Option<usize> {
+        self.headers.iter().position(|f| f == search)
+    }
+
     pub fn new_sanitized(file: &PathBuf) -> Result<Self, csv::Error> {
         debug!(msg = "sanitizing file", file = format!("{file:?}"));
-        let mut f = File::open(file.clone())?;
+        let mut f = File::open(file)?;
         let mut contents = Vec::<u8>::new();
 
         f.read_to_end(&mut contents)?;
@@ -160,7 +196,7 @@ impl Reader {
         File::options()
             .write(true)
             .truncate(true)
-            .open(file.clone())?
+            .open(file)?
             .write_all_at(&contents, 0)?;
 
         Self::new(file)
@@ -231,6 +267,9 @@ impl Reader {
             "secret" => sender.secret = source.to_string(),
             "host" => sender.host = source.to_string(),
             "subject" => sender.subject = source.to_string(),
+            "auth" => sender.auth = serde_json::from_str(source)?,
+            "plain" => sender.plain = source.parse()?,
+            "html" => sender.html = Some(source.parse()?),
             &_ => {}
         }
 
@@ -319,15 +358,11 @@ impl Reader {
                 }
 
                 if let Some(plain) = sender_map.plain.as_ref() {
-                    sender.plain.clone_from(plain);
+                    sender.plain.clone_from(plain)
                 }
 
                 if let Some(html) = sender_map.html.as_ref() {
                     sender.html = Some(html.to_path_buf())
-                }
-
-                if let Some(rr) = sender_map.read_receipts.as_ref() {
-                    sender.read_receipt = Some(rr.to_string())
                 }
             }
             senders.push(sender);

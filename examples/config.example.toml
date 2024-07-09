@@ -1,9 +1,0 @@
-# Example config file
-senders = "/home/sheke/Code/hm/senders.example.csv"
-receivers = "/home/sheke/Code/hm/examples/receivers.example.csv"
-content = "/home/sheke/Code/hm/examples"
-workers = 2
-rate = 180
-daily_rate = 500
-skip_permament = true
-skip_codes = [550, 535]

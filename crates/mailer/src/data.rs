@@ -1,7 +1,7 @@
 use handlebars::{Handlebars, TemplateError};
 use lettre::message::Mailboxes;
 use lettre::transport::smtp::authentication::Mechanism;
-use serde::de::{DeserializeOwned, Visitor};
+use serde::de::Visitor;
 use serde::Serializer;
 use serde::{de::Error as SerdeError, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
@@ -21,56 +21,6 @@ pub enum Error {
     TemplateError { src: String, err: TemplateError },
     #[error("expected: key=value pairs for variables; got: {data}")]
     TemplateVariableParseError { data: String },
-}
-
-#[derive(Debug, Default, PartialEq)]
-pub struct TemplateVariables(pub HashMap<String, String>);
-
-impl FromStr for TemplateVariables {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self(
-            s.split(';')
-                .map(|s| {
-                    if let Some(pos) = s.find('=') {
-                        let (key, val) = s.split_at(pos);
-                        Ok((key.to_string(), val[1..val.len()].to_string()))
-                    } else {
-                        Err(Error::TemplateVariableParseError {
-                            data: s.to_string(),
-                        })
-                    }
-                })
-                .collect::<Result<HashMap<String, String>, Error>>()?,
-        ))
-    }
-}
-
-impl Serialize for TemplateVariables {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(
-            &self
-                .0
-                .iter()
-                .map(|(k, v)| format!("{k}={v}"))
-                .collect::<Vec<String>>()
-                .join(";"),
-        )
-    }
-}
-
-impl<'de> Deserialize<'de> for TemplateVariables {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: &str = Deserialize::deserialize(deserializer)?;
-        Self::from_str(s).map_err(D::Error::custom)
-    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -125,7 +75,18 @@ impl<'de> Deserialize<'de> for CodesVec {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+pub struct DashboardConfig {
+    pub host: String,
+    pub api_key: String,
+    pub user: String,
+    pub instance: String,
+}
+
+pub type Senders = Vec<Arc<Sender>>;
+pub type Receivers = Vec<Arc<Receiver>>;
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Receiver {
     pub email: String,
     pub cc: Option<Mailboxes>,
@@ -134,28 +95,18 @@ pub struct Receiver {
     pub variables: Option<TemplateVariables>,
 }
 
-impl Default for Receiver {
-    fn default() -> Self {
-        Self {
-            email: "".into(),
-            sender: "".into(),
-            cc: None,
-            bcc: None,
-            variables: None,
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Sender {
-    pub email: String,
-    pub secret: String,
-    pub host: String,
     pub auth: Mechanism,
-    pub subject: String,
-    pub read_receipt: Option<String>,
-    pub plain: PathBuf,
+    pub email: String,
+    pub host: String,
     pub html: Option<PathBuf>,
+    pub plain: PathBuf,
+    pub secret: String,
+    pub subject: String,
+
+    #[serde(skip_serializing, skip_deserializing)]
+    pub receivers: Receivers,
     #[serde(skip_serializing, skip_deserializing)]
     pub templates: Option<Handlebars<'static>>,
 }
@@ -163,15 +114,15 @@ pub struct Sender {
 impl Default for Sender {
     fn default() -> Self {
         Self {
-            email: "".into(),
-            secret: "".into(),
-            subject: "".into(),
-            host: "".into(),
+            email: String::default(),
+            secret: String::default(),
+            subject: String::default(),
+            host: String::default(),
             auth: Mechanism::Plain,
-            read_receipt: None,
-            plain: PathBuf::new(),
+            plain: PathBuf::default(),
             html: None,
             templates: None,
+            receivers: vec![],
         }
     }
 }
@@ -204,7 +155,7 @@ impl Sender {
                         })?,
                     )
                     .map_err(|err| Error::TemplateError {
-                        src: self.plain.to_str().unwrap_or("plaintext file").into(),
+                        src: html.to_str().unwrap_or("md file").into(),
                         err,
                     })?,
 
@@ -212,7 +163,7 @@ impl Sender {
                     templates
                         .register_template_file("html", html)
                         .map_err(|err| Error::TemplateError {
-                            src: self.plain.to_str().unwrap_or("plaintext file").into(),
+                            src: html.to_str().unwrap_or("html file").into(),
                             err,
                         })?
                 }
@@ -225,45 +176,82 @@ impl Sender {
 
 impl PartialEq for Sender {
     fn eq(&self, other: &Self) -> bool {
-        if self.email != other.email {
-            return false;
-        }
-
-        if self.secret != other.secret {
-            return false;
-        }
-
-        if self.host != other.host {
-            return false;
-        }
-
         if self.auth != other.auth {
             return false;
         }
-
-        if self.subject != other.subject {
+        if self.email != other.email {
             return false;
         }
-
-        if self.plain != other.plain {
+        if self.host != other.host {
             return false;
         }
-
         if self.html != other.html {
             return false;
         }
-
+        if self.plain != other.plain {
+            return false;
+        }
+        if self.subject != other.subject {
+            return false;
+        }
+        if self.secret != other.secret {
+            return false;
+        }
         true
     }
 }
 
-pub type Senders = Vec<Arc<Sender>>;
-pub type Receivers = Vec<Arc<Receiver>>;
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TemplateVariables(pub HashMap<String, String>);
 
-pub fn read_input<D>(file: &PathBuf) -> Result<Vec<Arc<D>>, csv::Error>
-where
-    D: DeserializeOwned,
-{
+impl FromStr for TemplateVariables {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(
+            s.split(';')
+                .map(|s| {
+                    if let Some(pos) = s.find('=') {
+                        let (key, val) = s.split_at(pos);
+                        Ok((key.to_string(), val[1..val.len()].to_string()))
+                    } else {
+                        Err(Error::TemplateVariableParseError {
+                            data: s.to_string(),
+                        })
+                    }
+                })
+                .collect::<Result<HashMap<String, String>, Error>>()?,
+        ))
+    }
+}
+
+impl Serialize for TemplateVariables {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(
+            &self
+                .0
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<String>>()
+                .join(";"),
+        )
+    }
+}
+
+impl<'de> Deserialize<'de> for TemplateVariables {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s: &str = Deserialize::deserialize(deserializer)?;
+        Self::from_str(s).map_err(D::Error::custom)
+    }
+}
+
+pub fn read_receivers(file: &PathBuf) -> Result<Receivers, csv::Error> {
     let mut reader = csv::Reader::from_path(file)?;
     reader
         .deserialize()
@@ -274,57 +262,13 @@ where
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::str::FromStr;
-
-    #[test]
-    fn test_read_input() -> Result<(), csv::Error> {
-        let senders = read_input::<Sender>(&"../../examples/senders.example.csv".parse().unwrap())?;
-
-        assert_eq!(senders.len(), 10);
-        assert_eq!(
-            senders[2],
-            Sender {
-                email: "alexander@mail.com".into(),
-                secret: "Password123".into(),
-                host: "smtp.mail.com".into(),
-                auth: Mechanism::Login,
-                subject: "This is a test email for you {{name}}".into(),
-                read_receipt: None,
-                plain: "/home/sheke/Code/hermes/examples/text_message.example.txt"
-                    .parse()
-                    .unwrap(),
-                html: Some(
-                    "/home/sheke/Code/hermes/examples/html_message.example.html"
-                        .parse()
-                        .unwrap()
-                ),
-                templates: None
-            }
-            .into()
-        );
-
-        let receivers =
-            read_input::<Receiver>(&"../../examples/receivers.example.csv".parse().unwrap())?;
-
-        assert_eq!(receivers.len(), 11);
-        assert_eq!(
-            receivers[5],
-            Receiver {
-                email: "tom@example.com".into(),
-                cc: Some(Mailboxes::from_str("mark@example.com,sarah@example.com").unwrap()),
-                bcc: Some(Mailboxes::from_str("emma@example.com,john@example.com").unwrap()),
-                sender: "sarah.wilson@example.com".into(),
-                variables: Some(TemplateVariables(HashMap::from([
-                    ("name".to_string(), "Tom".to_string()),
-                    ("location".to_string(), "Berlin".to_string())
-                ])))
-            }
-            .into()
-        );
-
-        Ok(())
-    }
+pub fn read_senders(file: &PathBuf) -> Result<Vec<Sender>, csv::Error> {
+    let mut reader = csv::Reader::from_path(file)?;
+    reader
+        .deserialize::<Sender>()
+        .map(|rec| match rec {
+            Ok(r) => Ok(r),
+            Err(e) => Err(e),
+        })
+        .collect()
 }

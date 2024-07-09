@@ -1,9 +1,0 @@
-Dear {{name}},
-
-Thank you for subscribing to our newsletter from '{{location}}'. We're thrilled to have
-you onboard!
-
-Get ready to receive exciting updates, special offers, and more straight to your inbox. If you 
-have any questions or feedback, feel free to reply to this email. We'd love to hear from you!
-
-Best Regards, Team Hermes
