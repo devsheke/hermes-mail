@@ -21,3 +21,5 @@ tracing-indicatif = "0.3.6"
 indicatif = "0.17.8"
 toml = "0.8.12"
 serde = "1.0.201"
+tokio = { version = "1.38.0", features = ["full"] }
+thiserror = "1.0.61"
