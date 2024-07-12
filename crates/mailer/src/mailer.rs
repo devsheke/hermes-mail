@@ -124,11 +124,11 @@ impl Mailer {
                             soft = !err.is_permanent(),
                         );
 
+                        self.failures.push(task.receiver);
+
                         let stats = self.stats.get_mut(&task.sender.email).unwrap();
                         if err.is_permanent() {
                             stats.inc_bounced(1);
-                            self.failures.push(task.receiver);
-
                             if self.block_permanent {
                                 stats.block();
 
@@ -145,7 +145,6 @@ impl Mailer {
                             if self.skip_codes.binary_search(&code).is_ok() {
                                 stats.block();
                                 stats.inc_bounced(1);
-                                self.failures.push(task.receiver.clone());
 
                                 if let Some(dash) = self.dashboard_config.as_ref() {
                                     websocket::Message::send_block(
@@ -480,7 +479,7 @@ fn new_progress_span(len: u64) -> tracing::Span {
 
 fn save_failures(failures: &Receivers) -> Result<(), csv::Error> {
     let cwd = env::current_dir().unwrap();
-    let file = cwd.join("failures.csv");
+    let file = cwd.join("hermes_failures.csv");
 
     debug!(msg = "saving failures", file = format!("{file:?}"));
 
@@ -494,7 +493,7 @@ fn save_failures(failures: &Receivers) -> Result<(), csv::Error> {
 
 fn save_receivers(senders: &Senders) -> Result<(), csv::Error> {
     let cwd = env::current_dir().unwrap();
-    let file = cwd.join("remaining_receivers.csv");
+    let file = cwd.join("hermes_remaining_receivers.csv");
 
     debug!(msg = "saving receivers", file = format!("{file:?}"));
 
@@ -510,7 +509,7 @@ fn save_receivers(senders: &Senders) -> Result<(), csv::Error> {
 
 fn save_stats(stats: &HashMap<String, Stats>) -> Result<(), csv::Error> {
     let cwd = env::current_dir().unwrap();
-    let file = cwd.join("stats.csv");
+    let file = cwd.join("hermes_stats.csv");
 
     debug!(msg = "saving stats", file = format!("{file:?}"));
 
