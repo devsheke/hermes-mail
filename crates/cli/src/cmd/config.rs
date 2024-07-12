@@ -241,6 +241,12 @@ impl Config {
             builder = builder.block_permanent()
         }
 
+        if let Some(rr) = self.mailer.read_receipts {
+            if rr {
+                builder = builder.read_receipts()
+            }
+        }
+
         if let Some(dash) = self.dashboard {
             builder = builder.dashboard_config(dash);
         }
