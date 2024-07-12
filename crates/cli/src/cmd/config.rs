@@ -53,7 +53,7 @@ impl CSVMap {
         file: &PathBuf,
         sanitize: bool,
     ) -> Result<PathBuf, StdError> {
-        let mut reader = if sanitize {
+        let reader = if sanitize {
             Reader::new_sanitized(file)?
         } else {
             Reader::new(file)?
@@ -245,6 +245,7 @@ impl Config {
             builder = builder.dashboard_config(dash);
         }
 
-        Ok(builder.build()?.run().await)
+        builder.build()?.run().await;
+        Ok(())
     }
 }
