@@ -9,24 +9,24 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum BuildError {
     #[error("for file: '{file}'; err: {err}")]
-    CSVError { file: PathBuf, err: csv::Error },
+    Csv { file: PathBuf, err: csv::Error },
     #[error("queue is missing field: '{0}'")]
-    MissingFieldError(String),
+    MissingField(String),
     #[error("{0}")]
-    DataError(data::Error),
+    Data(data::Error),
 }
 
 impl BuildError {
     fn csv(file: PathBuf, err: csv::Error) -> Self {
-        Self::CSVError { file, err }
+        Self::Csv { file, err }
     }
 
     fn missing_field(s: String) -> Self {
-        Self::MissingFieldError(s)
+        Self::MissingField(s)
     }
 
     fn data(err: data::Error) -> Self {
-        Self::DataError(err)
+        Self::Data(err)
     }
 }
 
@@ -114,7 +114,7 @@ impl Builder {
     ) -> Result<(Vec<Sender>, Receivers), BuildError> {
         let senders = data::read_senders(&senders).map_err(|err| BuildError::csv(senders, err))?;
 
-        let receivers = data::read_receivers(&receivers).map_err(|err| BuildError::CSVError {
+        let receivers = data::read_receivers(&receivers).map_err(|err| BuildError::Csv {
             file: receivers,
             err,
         })?;
@@ -161,7 +161,7 @@ impl Builder {
                     if r.sender.eq(&s.email) {
                         return Some(r.clone());
                     }
-                    return None;
+                    None
                 })
                 .collect()
         });

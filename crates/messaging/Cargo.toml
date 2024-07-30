@@ -1,0 +1,15 @@
+[package]
+name = "hermes-messaging"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = "1.0.204"
+tokio-tungstenite = "0.23.1"
+tracing = "0.1.40"

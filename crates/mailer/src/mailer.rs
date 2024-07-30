@@ -1,9 +1,11 @@
+use self::task::Task;
 use crate::{
     data::{DashboardConfig, Receivers, Sender, Senders},
     stats::Stats,
-    websocket,
+    websocket::{self, WebsocketSender},
 };
 use chrono::{DateTime, Datelike, Duration, Local, Timelike};
+use hermes_messaging;
 use indicatif::ProgressStyle;
 use lettre::transport::smtp::response::Code;
 use std::{
@@ -15,8 +17,6 @@ use std::{
 };
 use tracing::{debug, error, info, info_span, warn, Span};
 use tracing_indicatif::span_ext::IndicatifSpanExt;
-
-use self::task::Task;
 
 mod builder;
 mod task;
@@ -41,7 +41,7 @@ impl Cursor {
 
     fn recalibrate(&mut self, new_len: usize) {
         if new_len > 0 {
-            self.ptr = self.ptr % new_len
+            self.ptr %= new_len
         }
     }
 }
@@ -71,7 +71,7 @@ impl Mailer {
     fn collect_tasks(
         &mut self,
         tasks: Vec<JoinHandle<task::TaskResult>>,
-        outbound_tx: &websocket::SocketChannelSender,
+        ws_sender: &Option<websocket::WebsocketSender>,
     ) -> usize {
         let mut sent = 0;
 
@@ -97,17 +97,13 @@ impl Mailer {
                     );
 
                     if let Some(dash) = self.dashboard_config.as_ref() {
-                        match serde_json::to_string(&stats) {
-                            Ok(stats) => websocket::Message::send_sender_stats(
-                                outbound_tx,
-                                dash.instance.clone(),
-                                dash.user.clone(),
-                                stats,
-                            ),
-                            Err(err) => {
-                                error!(msg = "failed to send sender stats", err = format!("{err}"))
-                            }
-                        };
+                        if let Err(err) = ws_sender.as_ref().unwrap().send_sender_stats(
+                            dash.instance.clone(),
+                            dash.user.clone(),
+                            stats,
+                        ) {
+                            error!(msg = "sender stats send err", err = format!("{err}"));
+                        }
                     }
 
                     stats.set_timeout(self.rate);
@@ -115,7 +111,7 @@ impl Mailer {
                 }
 
                 Err(err) => match err {
-                    task::Error::SendError { task, err } => {
+                    task::Error::Send { task, err } => {
                         error!(
                             msg = "failure",
                             error = format!("{err}"),
@@ -127,18 +123,20 @@ impl Mailer {
                         self.failures.push(task.receiver);
 
                         let stats = self.stats.get_mut(&task.sender.email).unwrap();
+
                         if err.is_permanent() {
                             stats.inc_bounced(1);
                             if self.block_permanent {
                                 stats.block();
 
                                 if let Some(dash) = self.dashboard_config.as_ref() {
-                                    websocket::Message::send_block(
-                                        outbound_tx,
+                                    if let Err(err) = ws_sender.as_ref().unwrap().send_block(
                                         dash.instance.clone(),
                                         dash.user.clone(),
-                                        task.sender.email.clone(),
-                                    );
+                                        stats.email.clone(),
+                                    ) {
+                                        error!(msg = "block send err", err = format!("{err}"));
+                                    }
                                 }
                             }
                         } else if let Some(code) = code_to_int(err.status()) {
@@ -147,30 +145,26 @@ impl Mailer {
                                 stats.inc_bounced(1);
 
                                 if let Some(dash) = self.dashboard_config.as_ref() {
-                                    websocket::Message::send_block(
-                                        outbound_tx,
+                                    if let Err(err) = ws_sender.as_ref().unwrap().send_block(
                                         dash.instance.clone(),
                                         dash.user.clone(),
-                                        task.sender.email.clone(),
-                                    )
+                                        stats.email.clone(),
+                                    ) {
+                                        error!(msg = "block send err", err = format!("{err}"));
+                                    }
                                 }
                             }
                         }
 
                         if let Some(dash) = self.dashboard_config.as_ref() {
                             let stats = self.stats.get_mut(&task.sender.email).unwrap();
-                            match serde_json::to_string(&stats) {
-                                Ok(stats) => websocket::Message::send_sender_stats(
-                                    outbound_tx,
-                                    dash.instance.clone(),
-                                    dash.user.clone(),
-                                    stats,
-                                ),
-                                Err(err) => error!(
-                                    msg = "failed to send sender stats",
-                                    err = format!("{err}")
-                                ),
-                            };
+                            if let Err(err) = ws_sender.as_ref().unwrap().send_sender_stats(
+                                dash.instance.clone(),
+                                dash.user.clone(),
+                                stats,
+                            ) {
+                                error!(msg = "sender stats send err", err = format!("{err}"));
+                            }
                         }
                     }
                     _ => {
@@ -227,8 +221,12 @@ impl Mailer {
         }
     }
 
-    fn read_messages(&mut self, inbound_rx: &crossbeam_channel::Receiver<websocket::Message>) {
+    fn read_messages(
+        &mut self,
+        inbound_rx: &crossbeam_channel::Receiver<hermes_messaging::Message>,
+    ) {
         debug!(msg = "reading inbound messages");
+
         for _ in 0..inbound_rx.len() {
             let message = match inbound_rx.recv() {
                 Ok(msg) => msg,
@@ -239,17 +237,63 @@ impl Mailer {
             };
 
             match message.kind {
-                websocket::MessageKind::Block => {
+                hermes_messaging::MessageKind::Block => {
+                    let block: hermes_messaging::InboundBlockMessage =
+                        match serde_json::from_str(&message.data) {
+                            Ok(b) => b,
+                            Err(err) => {
+                                error!(msg = "block msg read err", err = format!("{err}"));
+                                continue;
+                            }
+                        };
+
+                    if let Some(sender) = self.stats.get_mut(&block.email) {
+                        sender.block();
+                    }
+                }
+
+                hermes_messaging::MessageKind::Unblock => {
+                    let unblock: hermes_messaging::UnblockMessage =
+                        match serde_json::from_str(&message.data) {
+                            Ok(u) => u,
+                            Err(err) => {
+                                error!(msg = "unblock msg read err", err = format!("{err}"));
+                                continue;
+                            }
+                        };
+
+                    if let Some(sender) = self.stats.get_mut(&unblock.email) {
+                        if unblock.unblock {
+                            sender.unblock();
+                        }
+                        if unblock.timeout > 0 {
+                            let timeout =
+                                Local::now() + Duration::try_seconds(unblock.timeout).unwrap();
+
+                            match sender.timeout {
+                                Some(t) => {
+                                    if t.lt(&timeout) {
+                                        sender.timeout = Some(timeout)
+                                    }
+                                }
+                                None => {
+                                    sender.timeout = Some(
+                                        Local::now()
+                                            + Duration::try_seconds(unblock.timeout).unwrap(),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                hermes_messaging::MessageKind::LocalBlock => {
                     if let Some(sender) = self.stats.get_mut(&message.data) {
                         sender.block();
                     }
                 }
-                websocket::MessageKind::Unblock => {
-                    if let Some(sender) = self.stats.get_mut(&message.data) {
-                        sender.unblock();
-                    }
-                }
-                websocket::MessageKind::Stop => {
+
+                hermes_messaging::MessageKind::Stop => {
                     self.save_progress();
                     warn!("received stop signal; stopping process.");
                     process::exit(-1);
@@ -268,9 +312,10 @@ impl Mailer {
     fn init_dashboard(
         &self,
         dash: &DashboardConfig,
-        inbound_tx: crossbeam_channel::Sender<websocket::Message>,
+        inbound_tx: crossbeam_channel::Sender<hermes_messaging::Message>,
+        outbound_tx: websocket::SocketChannelSender,
         outbound_rx: websocket::SocketChannelReceiver,
-    ) {
+    ) -> WebsocketSender {
         let ws_url = dash.host.replace("http", "ws");
         let instance = dash.instance.clone();
         let tx = inbound_tx.clone();
@@ -283,14 +328,25 @@ impl Mailer {
             )
             .await
         });
+
+        if let Some(block_checker) = dash.block_checker.as_ref() {
+            let dash = dash.to_mini();
+            let b = block_checker.to_owned();
+            b.query_block_status(self.senders.clone(), dash, inbound_tx);
+        }
+
+        WebsocketSender::new(outbound_tx)
     }
 
     pub async fn run(&mut self) {
         let (inbound_tx, inbound_rx) = crossbeam_channel::unbounded();
         let (outbound_tx, outbound_rx) = futures_channel::mpsc::unbounded();
 
+        let mut ws_sender: Option<websocket::WebsocketSender> = None;
+
         if let Some(dash) = self.dashboard_config.as_ref() {
-            self.init_dashboard(dash, inbound_tx, outbound_rx)
+            ws_sender =
+                Some(self.init_dashboard(dash, inbound_tx, outbound_tx.clone(), outbound_rx));
         }
 
         let mut cursor = Cursor::new(self.senders.len());
@@ -386,13 +442,21 @@ impl Mailer {
                 cursor.inc();
             }
 
-            let _sent = self.collect_tasks(tasks, &outbound_tx);
+            let _sent = self.collect_tasks(tasks, &ws_sender);
 
             Span::current().pb_inc(_sent as u64);
             sent += _sent;
 
             if _sent > 0 {
-                self.send_task_stats(sent, &outbound_tx);
+                if let Some(dash) = self.dashboard_config.as_ref() {
+                    if let Err(err) = ws_sender.as_ref().unwrap().send_task_stats(
+                        dash.instance.clone(),
+                        dash.user.clone(),
+                        sent,
+                    ) {
+                        error!(msg = "task stats send err", err = format!("{err}"));
+                    }
+                }
             }
 
             self.read_messages(&inbound_rx);
@@ -414,22 +478,6 @@ impl Mailer {
 
         save_receivers(&self.senders)
             .unwrap_or_else(|e| warn!(msg = "could not save receivers", error = format!("{e}")));
-    }
-
-    fn send_task_stats(&self, sent: usize, outbound_tx: &websocket::SocketChannelSender) {
-        if let Some(dash) = self.dashboard_config.as_ref() {
-            match serde_json::to_string(&sent) {
-                Ok(sent) => {
-                    websocket::Message::send_task_stats(
-                        outbound_tx,
-                        dash.instance.clone(),
-                        dash.user.clone(),
-                        sent,
-                    );
-                }
-                Err(err) => error!(msg = "failed to send task stats", err = format!("{err}")),
-            }
-        }
     }
 
     fn sleep_through_weekend() {

@@ -1,101 +1,102 @@
 use futures::{future, pin_mut, stream::StreamExt};
-use serde::{Deserialize, Serialize};
+use hermes_messaging::{Message, MessageKind, MessageSender, SenderType, UnblockRequest};
+use thiserror::Error;
 use tokio_tungstenite::{connect_async, tungstenite::Message as TMessage};
 use tracing::{error, info, trace};
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SenderType {
-    Instance,
-    Server,
-    User,
+use crate::stats::Stats;
+
+#[derive(Error, Debug)]
+pub enum SendError {
+    #[error("send error: {0}")]
+    SerdeError(serde_json::Error),
+    #[error("send error: {0}")]
+    ChannelError(futures_channel::mpsc::TrySendError<TMessage>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum MessageKind {
-    Block,
-    Error,
-    SenderStats,
-    Stop,
-    TaskStats,
-    Unblock,
+pub struct WebsocketSender {
+    send_ch: SocketChannelSender,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Message {
-    pub data: String,
-    pub from: String,
-    pub from_type: SenderType,
-    pub kind: MessageKind,
-    pub to: String,
+impl MessageSender for WebsocketSender {
+    type Err = SendError;
+
+    fn send(&self, msg: Message) -> Result<(), SendError> {
+        let tmsg = TMessage::Text(serde_json::to_string(&msg).map_err(SendError::SerdeError)?);
+        self.send_ch
+            .unbounded_send(tmsg)
+            .map_err(SendError::ChannelError)?;
+
+        Ok(())
+    }
 }
 
-impl Message {
-    fn send(self, tx: &SocketChannelSender) {
-        let tmsg = match self.to_tmessage() {
-            Ok(t) => t,
-            Err(err) => {
-                error!(msg = "msg conversion err", err = format!("{err}"));
-                return;
-            }
-        };
-
-        tx.unbounded_send(tmsg)
-            .unwrap_or_else(|err| error!(msg = "socket send err", err = format!("{err}")))
+impl WebsocketSender {
+    pub fn new(send_ch: SocketChannelSender) -> Self {
+        Self { send_ch }
     }
 
     pub fn send_block(
-        tx: &SocketChannelSender,
+        &self,
         sender_id: String,
         receiver_id: String,
         email: String,
-    ) {
-        Self {
+    ) -> Result<(), SendError> {
+        let data = serde_json::to_string(&UnblockRequest {
+            instance: sender_id.clone(),
+            email,
+            password: "".into(),
+            should_unblock: false,
+        })
+        .unwrap();
+
+        let msg = Message {
+            data,
             from: sender_id,
             from_type: SenderType::Instance,
-            to: receiver_id,
             kind: MessageKind::Block,
-            data: email,
-        }
-        .send(tx)
+            to: receiver_id,
+        };
+
+        self.send(msg)
     }
 
     pub fn send_sender_stats(
-        tx: &SocketChannelSender,
+        &self,
         sender_id: String,
         receiver_id: String,
-        stats: String,
-    ) {
-        Self {
+        stats: &Stats,
+    ) -> Result<(), SendError> {
+        let data = serde_json::to_string(&stats).unwrap();
+
+        let msg = Message {
+            data,
             from: sender_id,
             from_type: SenderType::Instance,
-            to: receiver_id,
             kind: MessageKind::SenderStats,
-            data: stats,
-        }
-        .send(tx)
+            to: receiver_id,
+        };
+
+        self.send(msg)
     }
 
     pub fn send_task_stats(
-        tx: &SocketChannelSender,
+        &self,
         sender_id: String,
         receiver_id: String,
-        stats: String,
-    ) {
-        Self {
+        sent: usize,
+    ) -> Result<(), SendError> {
+        let data: String = serde_json::to_string(&sent).unwrap();
+
+        let msg = Message {
+            data,
             from: sender_id,
             from_type: SenderType::Instance,
-            to: receiver_id,
             kind: MessageKind::TaskStats,
-            data: stats,
-        }
-        .send(tx)
-    }
+            to: receiver_id,
+        };
 
-    pub fn to_tmessage(&self) -> Result<TMessage, serde_json::Error> {
-        Ok(TMessage::Text(serde_json::to_string(self)?))
+        self.send(msg)
     }
 }
 

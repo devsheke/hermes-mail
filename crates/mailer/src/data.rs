@@ -13,6 +13,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use thiserror::Error;
 
+use crate::block_checker;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("for file: '{file}'; err: {err}")]
@@ -81,6 +83,25 @@ pub struct DashboardConfig {
     pub api_key: String,
     pub user: String,
     pub instance: String,
+    pub block_checker: Option<block_checker::Checker>,
+}
+
+pub struct MiniDashboardConfig {
+    pub host: String,
+    pub api_key: String,
+    pub user: String,
+    pub instance: String,
+}
+
+impl DashboardConfig {
+    pub fn to_mini(&self) -> MiniDashboardConfig {
+        MiniDashboardConfig {
+            host: self.host.clone(),
+            api_key: self.api_key.clone(),
+            user: self.user.clone(),
+            instance: self.instance.clone(),
+        }
+    }
 }
 
 pub type Senders = Vec<Arc<Sender>>;

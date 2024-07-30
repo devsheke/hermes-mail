@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/cli", "crates/mailer", "crates/csv"]
+members = ["crates/cli", "crates/mailer", "crates/csv", "crates/messaging"]
 default_members = ["crates/cli"]
 
 [workspace.package]
