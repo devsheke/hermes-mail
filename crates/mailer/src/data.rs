@@ -116,7 +116,7 @@ pub struct Receiver {
     pub variables: Option<TemplateVariables>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Sender {
     pub auth: Mechanism,
     pub email: String,
