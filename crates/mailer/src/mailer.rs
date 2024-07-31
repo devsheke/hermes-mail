@@ -1,5 +1,6 @@
 use self::task::Task;
 use crate::{
+    block_checker,
     data::{DashboardConfig, Receivers, Sender, Senders},
     stats::Stats,
     websocket::{self, WebsocketSender},
@@ -332,7 +333,14 @@ impl Mailer {
         if let Some(block_checker) = dash.block_checker.as_ref() {
             let dash = dash.to_mini();
             let b = block_checker.to_owned();
-            b.query_block_status(self.senders.clone(), dash, inbound_tx);
+            b.query_block_status(
+                self.senders
+                    .iter()
+                    .map(|s| block_checker::Sender::from(s))
+                    .collect(),
+                dash,
+                inbound_tx,
+            );
         }
 
         WebsocketSender::new(outbound_tx)
@@ -387,8 +395,15 @@ impl Mailer {
                     }
 
                     if !is_tomorrow(self.start) && stats.today > self.daily_limit {
+                        println!(
+                            "is tomorrow = {}, today = {}, daily = {}",
+                            is_tomorrow(self.start),
+                            stats.today,
+                            self.daily_limit
+                        );
                         warn!(msg = "sender hit daily limit", sender = sender);
-                        stats.set_timeout_if_none(Duration::try_hours(24).unwrap())
+                        stats.set_timeout(Duration::try_hours(24).unwrap());
+                        continue;
                     }
 
                     if let Some(t) = stats.is_timed_out() {

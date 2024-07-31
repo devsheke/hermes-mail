@@ -1,4 +1,4 @@
-use crate::data::{MiniDashboardConfig, Sender};
+use crate::data::{self, MiniDashboardConfig};
 use chrono::{Duration, Local};
 use hermes_messaging::{Message, UnblockRequest};
 use imap::Session;
@@ -15,7 +15,7 @@ use tracing::{error, warn};
 pub(crate) trait BlockChecker: Sized {
     fn query_block_status(
         self,
-        senders: Vec<Arc<Sender>>,
+        senders: Vec<Sender>,
         dashboard_config: MiniDashboardConfig,
         ch: crossbeam_channel::Sender<Message>,
     ) -> JoinHandle<()>;
@@ -27,10 +27,24 @@ pub enum Checker {
     Imap(ImapBlockChecker),
 }
 
+pub struct Sender {
+    pub email: String,
+    pub secret: String,
+}
+
+impl From<&Arc<data::Sender>> for Sender {
+    fn from(value: &Arc<data::Sender>) -> Self {
+        Self {
+            email: value.email.clone(),
+            secret: value.secret.clone(),
+        }
+    }
+}
+
 impl Checker {
     pub fn query_block_status(
         self,
-        senders: Vec<Arc<Sender>>,
+        senders: Vec<Sender>,
         dashboard_config: MiniDashboardConfig,
         ch: crossbeam_channel::Sender<Message>,
     ) {
@@ -49,6 +63,7 @@ pub struct ImapBlockChecker {
     host: String,
     email: String,
     password: String,
+    subject_queries: Vec<String>,
     body_queries: Vec<String>,
 }
 
@@ -59,12 +74,14 @@ impl ImapBlockChecker {
         user: String,
         password: String,
         query_strings: Vec<String>,
+        subject_queries: Vec<String>,
     ) -> Self {
         Self {
             unblock_url,
             host: domain,
             email: user,
             password,
+            subject_queries,
             body_queries: query_strings,
         }
     }
@@ -82,29 +99,30 @@ impl ImapBlockChecker {
 impl BlockChecker for ImapBlockChecker {
     fn query_block_status(
         self,
-        senders: Vec<Arc<Sender>>,
+        senders: Vec<Sender>,
         dashboard_config: MiniDashboardConfig,
         ch: crossbeam_channel::Sender<Message>,
     ) -> JoinHandle<()> {
-        let timer = Local::now();
+        let mut timer = Local::now();
         let mut session: Option<IMAPSession> = None;
 
-        let code_query = self
-            .body_queries
+        let subject_query = self
+            .subject_queries
             .iter()
-            .map(|b| format!("BODY \"{b}\""))
+            .map(|b| format!("SUBJECT \"{b}\""))
             .collect::<Vec<String>>()
             .join(" OR ");
 
         thread::spawn(move || {
             loop {
-                if Local::now().gt(&(timer + Duration::try_minutes(5).unwrap())) {
+                if Local::now().gt(&(timer + Duration::try_minutes(2).unwrap())) {
                     if let Some(s) = session.as_mut() {
                         s.logout().unwrap_or_else(|e| {
                             warn!(msg = "IMAP logout failed", err = format!("{e}"))
                         });
                     }
                     session = None;
+                    timer = Local::now();
                 }
 
                 let _session = match session.as_mut() {
@@ -127,7 +145,7 @@ impl BlockChecker for ImapBlockChecker {
 
                 for sender in senders.iter() {
                     let res = match _session
-                        .search(format!("{code_query} HEADER TO \"{}\"", sender.email))
+                        .search(format!("{subject_query} HEADER TO \"{}\"", sender.email))
                     {
                         Ok(r) => r,
                         Err(err) => {
@@ -136,37 +154,79 @@ impl BlockChecker for ImapBlockChecker {
                         }
                     };
 
-                    if !res.is_empty() {
-                        warn!(msg = "email address has been blocked", email = sender.email);
+                    if res.is_empty() {
+                        continue;
+                    }
 
-                        let body = UnblockRequest {
-                            instance: dashboard_config.instance.clone(),
-                            email: sender.email.clone(),
-                            password: sender.secret.clone(),
-                            should_unblock: true,
+                    let messages = match _session.fetch(
+                        res.iter()
+                            .map(|n| format!("{n}"))
+                            .collect::<Vec<String>>()
+                            .join(","),
+                        "RFC822",
+                    ) {
+                        Ok(m) => m,
+                        Err(err) => {
+                            error!(msg = "email fetch", err = format!("{err}"));
+                            continue;
+                        }
+                    };
+
+                    for message in messages.iter() {
+                        let body = match message.body() {
+                            Some(b) => std::str::from_utf8(b),
+                            None => {
+                                warn!(msg = "no email body");
+                                continue;
+                            }
                         };
 
-                        let res = Reqwest::new()
-                            .post(&self.unblock_url)
-                            .bearer_auth(&dashboard_config.api_key)
-                            .json(&body)
-                            .send();
+                        if let Err(err) = body {
+                            error!(msg = "email body utf8 err", err = format!("{err}"));
+                            continue;
+                        }
 
-                        match res {
-                            Ok(_) => {}
-                            Err(err) => error!(msg = "unblock request err", err = format!("{err}")),
-                        };
+                        let body = body.unwrap().to_string();
+                        let hits = self
+                            .body_queries
+                            .iter()
+                            .filter(|q| body.contains(*q))
+                            .count();
 
-                        ch.send(Message {
-                            data: sender.email.clone(),
-                            from: "".into(),
-                            from_type: hermes_messaging::SenderType::Instance,
-                            kind: hermes_messaging::MessageKind::LocalBlock,
-                            to: "".into(),
-                        })
-                        .unwrap_or_else(|err| {
-                            error!(msg = "local block send err", err = format!("{err}"))
-                        });
+                        if hits > 0 {
+                            warn!(msg = "email address has been blocked", email = sender.email);
+
+                            let body = UnblockRequest {
+                                instance: dashboard_config.instance.clone(),
+                                email: sender.email.clone(),
+                                password: sender.secret.clone(),
+                                should_unblock: true,
+                            };
+
+                            let res = Reqwest::new()
+                                .post(&self.unblock_url)
+                                .bearer_auth(&dashboard_config.api_key)
+                                .json(&body)
+                                .send();
+
+                            match res {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    error!(msg = "unblock request err", err = format!("{err}"))
+                                }
+                            };
+
+                            ch.send(Message {
+                                data: sender.email.clone(),
+                                from: "".into(),
+                                from_type: hermes_messaging::SenderType::Instance,
+                                kind: hermes_messaging::MessageKind::LocalBlock,
+                                to: "".into(),
+                            })
+                            .unwrap_or_else(|err| {
+                                error!(msg = "local block send err", err = format!("{err}"))
+                            });
+                        }
                     }
 
                     let query = _session.search(format!("HEADER TO \"{}\"", sender.email));
@@ -204,7 +264,7 @@ impl BlockChecker for ImapBlockChecker {
 mod tests {
     use crate::data::{self, DashboardConfig};
 
-    use super::{BlockChecker, ImapBlockChecker};
+    use super::{BlockChecker, ImapBlockChecker, Sender};
     use std::{
         env::{self, var},
         sync::Arc,
@@ -217,6 +277,7 @@ mod tests {
             host: env::var("DOMAIN")?,
             email: env::var("USER")?,
             password: env::var("PASSWORD")?,
+            subject_queries: vec![],
             body_queries: vec![],
         };
 
@@ -254,6 +315,7 @@ mod tests {
             host: env::var("DOMAIN")?,
             email: env::var("USER")?,
             password: env::var("PASSWORD")?,
+            subject_queries: vec![],
             body_queries: vec![env::var("QUERY")?],
         };
 
@@ -261,7 +323,7 @@ mod tests {
 
         let senders = data::read_senders(&env::var("SENDERS")?.parse()?)?
             .into_iter()
-            .map(|s| Arc::new(s))
+            .map(|s| Sender::from(&Arc::new(s)))
             .collect();
 
         let (tx, _rx) = crossbeam_channel::unbounded();
