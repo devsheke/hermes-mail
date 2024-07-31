@@ -1,5 +1,6 @@
 use futures::{future, pin_mut, stream::StreamExt};
 use hermes_messaging::{Message, MessageKind, MessageSender, SenderType, UnblockRequest};
+use std::process;
 use thiserror::Error;
 use tokio_tungstenite::{connect_async, tungstenite::Message as TMessage};
 use tracing::{error, info, trace};
@@ -110,9 +111,13 @@ pub async fn connect_and_listen(
 ) {
     info!(msg = "establishing websocket connection");
 
-    let (ws_stream, _) = connect_async(url)
-        .await
-        .expect("Failed to connect to WebSocket server");
+    let (ws_stream, _) = match connect_async(url).await {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!("error: {err}");
+            process::exit(1)
+        }
+    };
 
     let (write, read) = ws_stream.split();
 
