@@ -33,7 +33,7 @@ impl Cursor {
     }
 
     fn inc(&mut self) {
-        self.ptr = (self.ptr + 1) % self.size
+        self.ptr = (self.ptr + 1) % self.size;
     }
 
     fn set(&mut self, ptr: usize) {
@@ -41,6 +41,7 @@ impl Cursor {
     }
 
     fn recalibrate(&mut self, new_len: usize) {
+        self.size = new_len;
         if new_len > 0 {
             self.ptr %= new_len
         }
@@ -383,8 +384,6 @@ impl Mailer {
                     self.reset_daily_lim();
                 }
 
-                cursor.recalibrate(self.senders.len());
-
                 {
                     let sender = &self.senders[cursor.ptr].email;
                     let stats = self.stats.get_mut(sender).unwrap();
@@ -395,12 +394,6 @@ impl Mailer {
                     }
 
                     if !is_tomorrow(self.start) && stats.today > self.daily_limit {
-                        println!(
-                            "is tomorrow = {}, today = {}, daily = {}",
-                            is_tomorrow(self.start),
-                            stats.today,
-                            self.daily_limit
-                        );
                         warn!(msg = "sender hit daily limit", sender = sender);
                         stats.set_timeout(Duration::try_hours(24).unwrap());
                         continue;
@@ -435,12 +428,13 @@ impl Mailer {
                 let receiver = match sender.receivers.pop() {
                     Some(r) => r,
                     None => {
-                        if cursor.ptr == self.senders.len() {
+                        if cursor.ptr == self.senders.len() - 1 {
                             self.senders.pop();
                         } else {
                             self.senders.remove(cursor.ptr);
                         }
                         cursor.inc();
+                        cursor.recalibrate(self.senders.len());
                         continue;
                     }
                 };

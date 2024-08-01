@@ -132,7 +132,6 @@ pub async fn connect_and_listen(
         };
 
         if data.is_empty() {
-            error!(msg = "empty socket msg");
             return;
         }
 

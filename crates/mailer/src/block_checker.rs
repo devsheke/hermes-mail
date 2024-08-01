@@ -130,7 +130,6 @@ impl BlockChecker for ImapBlockChecker {
                     None => match self.login() {
                         Ok(mut s) => {
                             if let Err(err) = s.select("INBOX") {
-                                println!("mailbox err: {err}");
                                 error!(msg = "failed to select inbox", err = format!("{err}"));
                                 continue;
                             }
