@@ -1,9 +1,11 @@
+use self::task::Task;
 use crate::{
     data::{DashboardConfig, Receivers, Sender, Senders},
     stats::Stats,
     websocket,
 };
 use chrono::{DateTime, Datelike, Duration, Local, Timelike};
+use futures::TryFutureExt;
 use indicatif::ProgressStyle;
 use lettre::transport::smtp::response::Code;
 use std::{
@@ -13,13 +15,18 @@ use std::{
     sync::Arc,
     thread::{self, JoinHandle},
 };
+use thiserror::Error;
 use tracing::{debug, error, info, info_span, warn, Span};
 use tracing_indicatif::span_ext::IndicatifSpanExt;
 
-use self::task::Task;
-
 mod builder;
 mod task;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("failed to connect to message hub: {1}")]
+    HubConn(Box<dyn std::error::Error>, String),
+}
 
 struct Cursor {
     size: usize,
@@ -41,6 +48,7 @@ impl Cursor {
 
     fn recalibrate(&mut self, new_len: usize) {
         if new_len > 0 {
+            self.size = new_len;
             self.ptr = self.ptr % new_len
         }
     }
@@ -265,32 +273,31 @@ impl Mailer {
         self.stats.iter_mut().for_each(|(_, s)| s.reset_daily());
     }
 
-    fn init_dashboard(
+    async fn init_dashboard(
         &self,
         dash: &DashboardConfig,
         inbound_tx: crossbeam_channel::Sender<websocket::Message>,
         outbound_rx: websocket::SocketChannelReceiver,
-    ) {
+    ) -> Result<(), Error> {
         let ws_url = dash.host.replace("http", "ws");
         let instance = dash.instance.clone();
         let tx = inbound_tx.clone();
 
-        tokio::spawn(async move {
-            websocket::connect_and_listen(
-                format!("{}/ws/instances/{}", ws_url, instance),
-                tx,
-                outbound_rx,
-            )
-            .await
-        });
+        websocket::connect_and_listen(
+            format!("{}/ws/instances/{}", ws_url, instance),
+            tx,
+            outbound_rx,
+        )
+        .map_err(|err| Error::HubConn(Box::new(err), ws_url))
+        .await
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> Result<(), Error> {
         let (inbound_tx, inbound_rx) = crossbeam_channel::unbounded();
         let (outbound_tx, outbound_rx) = futures_channel::mpsc::unbounded();
 
         if let Some(dash) = self.dashboard_config.as_ref() {
-            self.init_dashboard(dash, inbound_tx, outbound_rx)
+            self.init_dashboard(dash, inbound_tx, outbound_rx).await?
         }
 
         let mut cursor = Cursor::new(self.senders.len());
@@ -319,8 +326,6 @@ impl Mailer {
                     self.reset_daily_lim();
                 }
 
-                cursor.recalibrate(self.senders.len());
-
                 {
                     let sender = &self.senders[cursor.ptr].email;
                     let stats = self.stats.get_mut(sender).unwrap();
@@ -332,7 +337,7 @@ impl Mailer {
 
                     if !is_tomorrow(self.start) && stats.today > self.daily_limit {
                         warn!(msg = "sender hit daily limit", sender = sender);
-                        stats.set_timeout_if_none(Duration::try_hours(24).unwrap())
+                        stats.add_to_timeout(Duration::try_hours(24).unwrap())
                     }
 
                     if let Some(t) = stats.is_timed_out() {
@@ -369,7 +374,8 @@ impl Mailer {
                         } else {
                             self.senders.remove(cursor.ptr);
                         }
-                        cursor.inc();
+
+                        cursor.recalibrate(self.senders.len());
                         continue;
                     }
                 };
@@ -403,6 +409,8 @@ impl Mailer {
 
         drop(progress_enter);
         drop(progress);
+
+        Ok(())
     }
 
     fn save_progress(&self) {

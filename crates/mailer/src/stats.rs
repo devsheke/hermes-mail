@@ -61,8 +61,13 @@ impl Stats {
         self.timeout = Some(Local::now() + dur);
     }
 
-    pub fn set_timeout_if_none(&mut self, dur: Duration) {
-        self.timeout.get_or_insert(Local::now() + dur);
+    pub fn add_to_timeout(&mut self, dur: Duration) {
+        let timeout = match self.timeout {
+            Some(t) => t + dur,
+            None => Local::now() + dur,
+        };
+
+        let _ = self.timeout.insert(timeout);
     }
 
     pub fn unblock(&mut self) {
