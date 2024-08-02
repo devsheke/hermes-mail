@@ -114,10 +114,7 @@ impl Task {
             set_header(&mut msg, DISPOSITION_HEADER, sender.email.clone());
         }
 
-        let creds = Credentials::new(
-            sender.email.split_once('@').unwrap().0.to_string(),
-            sender.secret.clone(),
-        );
+        let creds = Credentials::new(sender.email.clone(), sender.secret.clone());
 
         let mailer = match SmtpTransport::starttls_relay(&sender.host) {
             Ok(m) => m
