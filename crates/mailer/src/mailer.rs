@@ -49,7 +49,7 @@ impl Cursor {
     fn recalibrate(&mut self, new_len: usize) {
         if new_len > 0 {
             self.size = new_len;
-            self.ptr = self.ptr % new_len
+            self.ptr %= new_len
         }
     }
 }
@@ -123,7 +123,7 @@ impl Mailer {
                 }
 
                 Err(err) => match err {
-                    task::Error::SendError { task, err } => {
+                    task::Error::Send { task, err } => {
                         error!(
                             msg = "failure",
                             error = format!("{err}"),
