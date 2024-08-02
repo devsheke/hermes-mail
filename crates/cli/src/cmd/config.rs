@@ -251,7 +251,8 @@ impl Config {
             builder = builder.dashboard_config(dash);
         }
 
-        builder.build()?.run().await;
+        builder.build()?.run().await?;
+
         Ok(())
     }
 }

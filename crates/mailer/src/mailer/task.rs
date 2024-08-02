@@ -18,18 +18,18 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("could not build transport for task: {task:#?}; error: {err}")]
-    TransportError { task: Task, err: smtp::Error },
+    Transport { task: Task, err: smtp::Error },
     #[error("could not parse 'to'/'from' email for task: {task:#?}; error: {err}")]
-    AddressError { task: Task, err: AddressError },
+    Address { task: Task, err: AddressError },
     #[error("could not render message for: {task:#?}; error: {err}")]
-    RenderError { task: Task, err: RenderError },
+    Render { task: Task, err: RenderError },
     #[error("could build email message for: {task:#?}; error: {err}")]
-    MessageBuildError {
+    MessageBuild {
         task: Task,
         err: lettre::error::Error,
     },
     #[error("send error for: {task:#?}; error: {err}")]
-    SendError { task: Task, err: smtp::Error },
+    Send { task: Task, err: smtp::Error },
 }
 
 #[derive(Debug, Clone)]
@@ -57,17 +57,17 @@ impl Task {
 
         let sender_mbox: Mailbox = match sender.email.parse() {
             Ok(s) => s,
-            Err(err) => return Err(Error::AddressError { task: self, err }),
+            Err(err) => return Err(Error::Address { task: self, err }),
         };
 
         let receiver_mbox: Mailbox = match receiver.email.parse() {
             Ok(r) => r,
-            Err(err) => return Err(Error::AddressError { task: self, err }),
+            Err(err) => return Err(Error::Address { task: self, err }),
         };
 
         let subject = match templates.render("subject", &variables) {
             Ok(s) => s,
-            Err(err) => return Err(Error::RenderError { task: self, err }),
+            Err(err) => return Err(Error::Render { task: self, err }),
         };
 
         let mut builder = Message::builder()
@@ -89,23 +89,23 @@ impl Task {
 
         let plain = match templates.render("plain", variables) {
             Ok(p) => p,
-            Err(err) => return Err(Error::RenderError { task: self, err }),
+            Err(err) => return Err(Error::Render { task: self, err }),
         };
 
         let mut msg = if templates.has_template("html") {
             let html = match templates.render("html", &variables) {
                 Ok(h) => h,
-                Err(err) => return Err(Error::RenderError { task: self, err }),
+                Err(err) => return Err(Error::Render { task: self, err }),
             };
 
             match builder.multipart(MultiPart::alternative_plain_html(plain, html)) {
                 Ok(m) => m,
-                Err(err) => return Err(Error::MessageBuildError { task: self, err }),
+                Err(err) => return Err(Error::MessageBuild { task: self, err }),
             }
         } else {
             match builder.body(plain) {
                 Ok(m) => m,
-                Err(err) => return Err(Error::MessageBuildError { task: self, err }),
+                Err(err) => return Err(Error::MessageBuild { task: self, err }),
             }
         };
 
@@ -114,22 +114,19 @@ impl Task {
             set_header(&mut msg, DISPOSITION_HEADER, sender.email.clone());
         }
 
-        let creds = Credentials::new(
-            sender.email.split_once('@').unwrap().0.to_string(),
-            sender.secret.clone(),
-        );
+        let creds = Credentials::new(sender.email.clone(), sender.secret.clone());
 
         let mailer = match SmtpTransport::starttls_relay(&sender.host) {
             Ok(m) => m
                 .credentials(creds)
                 .authentication(vec![sender.auth])
                 .build(),
-            Err(err) => return Err(Error::TransportError { task: self, err }),
+            Err(err) => return Err(Error::Transport { task: self, err }),
         };
 
         match mailer.send(&msg) {
             Ok(_) => Ok(self),
-            Err(err) => Err(Error::SendError { task: self, err }),
+            Err(err) => Err(Error::Send { task: self, err }),
         }
     }
 

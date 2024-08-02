@@ -1,6 +1,9 @@
 use futures::{future, pin_mut, stream::StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio_tungstenite::{connect_async, tungstenite::Message as TMessage};
+use tokio::net::TcpStream;
+use tokio_tungstenite::{
+    connect_async, tungstenite::Message as TMessage, MaybeTlsStream, WebSocketStream,
+};
 use tracing::{error, info, trace};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -31,6 +34,9 @@ pub struct Message {
     pub kind: MessageKind,
     pub to: String,
 }
+
+pub type SocketChannelSender = futures_channel::mpsc::UnboundedSender<TMessage>;
+pub type SocketChannelReceiver = futures_channel::mpsc::UnboundedReceiver<TMessage>;
 
 impl Message {
     fn send(self, tx: &SocketChannelSender) {
@@ -99,21 +105,12 @@ impl Message {
     }
 }
 
-pub type SocketChannelSender = futures_channel::mpsc::UnboundedSender<TMessage>;
-pub type SocketChannelReceiver = futures_channel::mpsc::UnboundedReceiver<TMessage>;
-
-pub async fn connect_and_listen(
-    url: String,
+async fn rw_stream(
+    stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     inbound_tx: crossbeam_channel::Sender<Message>,
     outbound_rx: SocketChannelReceiver,
 ) {
-    info!(msg = "establishing websocket connection");
-
-    let (ws_stream, _) = connect_async(url)
-        .await
-        .expect("Failed to connect to WebSocket server");
-
-    let (write, read) = ws_stream.split();
+    let (write, read) = stream.split();
 
     let write_stream = outbound_rx.map(Ok).forward(write);
     let read_stream = read.for_each(|message| async {
@@ -147,4 +144,18 @@ pub async fn connect_and_listen(
 
     pin_mut!(write_stream, read_stream);
     future::select(write_stream, read_stream).await;
+}
+
+pub async fn connect_and_listen(
+    url: String,
+    inbound_tx: crossbeam_channel::Sender<Message>,
+    outbound_rx: SocketChannelReceiver,
+) -> Result<(), tokio_tungstenite::tungstenite::Error> {
+    info!(msg = "establishing websocket connection");
+
+    let (ws_stream, _) = connect_async(url).await?;
+
+    tokio::spawn(rw_stream(ws_stream, inbound_tx, outbound_rx));
+
+    Ok(())
 }
