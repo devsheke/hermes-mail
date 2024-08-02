@@ -78,7 +78,6 @@ pub struct SenderHeaderMap {
     subject: Option<String>,
     plain: Option<PathBuf>,
     html: Option<PathBuf>,
-    read_receipts: Option<String>,
 }
 
 impl SenderHeaderMap {
@@ -111,11 +110,6 @@ impl SenderHeaderMap {
         self
     }
 
-    pub fn read_receipts(mut self, i: usize) -> Self {
-        self.data.insert(i, "read_receipts".into());
-        self
-    }
-
     pub fn plain(mut self, i: usize) -> Self {
         self.data.insert(i, "plain".into());
         self
@@ -133,11 +127,6 @@ impl SenderHeaderMap {
 
     pub fn global_host(mut self, host: String) -> Self {
         self.named_host = Some(host);
-        self
-    }
-
-    pub fn global_read_receipts(mut self, s: String) -> Self {
-        self.read_receipts = Some(s);
         self
     }
 

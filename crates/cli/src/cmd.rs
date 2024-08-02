@@ -160,23 +160,6 @@ impl ConvertCommand {
         }
 
         if Confirm::new()
-            .with_prompt("Do you want to set the same read-receipt receiver for all senders?")
-            .interact()?
-        {
-            map = map.global_read_receipts(
-                Input::new()
-                    .with_prompt("Read-receipt receiver email address")
-                    .interact_text()?,
-            )
-        } else if let Some(read_receipts) = Select::new()
-            .with_prompt("Pick the field with read-receipt receiver email addresses")
-            .items(&reader.headers)
-            .interact_opt()?
-        {
-            map = map.read_receipts(read_receipts)
-        }
-
-        if Confirm::new()
             .with_prompt("Do you want to set the login mechanism for all senders?")
             .interact()?
         {
