@@ -1,4 +1,5 @@
 use crate::data::{Receiver, Sender, TemplateVariables};
+use handlebars::Handlebars;
 use handlebars::RenderError;
 use lettre::{
     address::AddressError,
@@ -52,7 +53,6 @@ impl Task {
         let (sender, receiver, empty) =
             (&self.sender, &self.receiver, TemplateVariables::default());
 
-        let templates = sender.templates.as_ref().unwrap();
         let variables = &receiver.variables.as_ref().unwrap_or(&empty).0;
 
         let sender_mbox: Mailbox = match sender.email.parse() {
@@ -65,7 +65,9 @@ impl Task {
             Err(err) => return Err(Error::Address { task: self, err }),
         };
 
-        let subject = match templates.render("subject", &variables) {
+        let mut templ = Handlebars::new();
+
+        let subject = match templ.render_template(&receiver.subject, &variables) {
             Ok(s) => s,
             Err(err) => return Err(Error::Render { task: self, err }),
         };
@@ -87,13 +89,21 @@ impl Task {
             }
         }
 
-        let plain = match templates.render("plain", variables) {
+        templ
+            .register_template_file("plain", &receiver.plain)
+            .unwrap();
+
+        let plain = match templ.render("plain", variables) {
             Ok(p) => p,
             Err(err) => return Err(Error::Render { task: self, err }),
         };
 
-        let mut msg = if templates.has_template("html") {
-            let html = match templates.render("html", &variables) {
+        if let Some(html) = receiver.html.as_ref() {
+            templ.register_template_file("plain", html).unwrap();
+        }
+
+        let mut msg = if templ.has_template("html") {
+            let html = match templ.render("html", &variables) {
                 Ok(h) => h,
                 Err(err) => return Err(Error::Render { task: self, err }),
             };

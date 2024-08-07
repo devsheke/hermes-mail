@@ -2,7 +2,7 @@ use clap::{ArgAction::SetTrue, Args, Parser, Subcommand};
 use dialoguer::{Confirm, Input, MultiSelect, Select};
 use hermes_csv::{Reader, ReceiverHeaderMap, SenderHeaderMap};
 use lettre::transport::smtp::authentication::Mechanism;
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
 pub mod config;
 
@@ -100,6 +100,53 @@ impl ConvertCommand {
             map = map.variables(pos)
         }
 
+        if Confirm::new()
+            .with_prompt("Do you want to set the same subject for all receivers?")
+            .interact()?
+        {
+            map = map.global_subject(Input::new().with_prompt("Email subject").interact_text()?)
+        } else if let Some(sub) = Select::new()
+            .with_prompt("Pick the field with the subjects")
+            .items(&reader.headers)
+            .interact_opt()?
+        {
+            map = map.subject(sub)
+        }
+
+        if Confirm::new()
+            .with_prompt("Do you want to set the same plaintext content for all receivers?")
+            .interact()?
+        {
+            let field = Input::<String>::new()
+                .with_prompt("Path to email plaintext file")
+                .interact_text()?;
+
+            map = map.global_plain(&PathBuf::from_str(&field)?)
+        } else if let Some(plain) = Select::new()
+            .with_prompt("Pick the field with the paths to the plaintext files")
+            .items(&reader.headers)
+            .interact_opt()?
+        {
+            map = map.subject(plain)
+        }
+
+        if Confirm::new()
+            .with_prompt("Do you want to set the same formatted content for all receivers?")
+            .interact()?
+        {
+            let field = Input::<String>::new()
+                .with_prompt("Path to email formatted file")
+                .interact_text()?;
+
+            map = map.global_plain(&PathBuf::from_str(&field)?)
+        } else if let Some(plain) = Select::new()
+            .with_prompt("Pick the field with the paths to the formatted files")
+            .items(&reader.headers)
+            .interact_opt()?
+        {
+            map = map.subject(plain)
+        }
+
         reader.convert_receivers(map, self.output)
     }
 
@@ -144,36 +191,6 @@ impl ConvertCommand {
             .interact_opt()?
         {
             map = map.host(host)
-        }
-
-        if Confirm::new()
-            .with_prompt("Do you want to set the same subject for all senders?")
-            .interact()?
-        {
-            map = map.global_subject(Input::new().with_prompt("Email subject").interact_text()?)
-        } else if let Some(host) = Select::new()
-            .with_prompt("Pick the field with the subjects")
-            .items(&reader.headers)
-            .interact_opt()?
-        {
-            map = map.subject(host)
-        }
-
-        if Confirm::new()
-            .with_prompt("Do you want to set the same read-receipt receiver for all senders?")
-            .interact()?
-        {
-            map = map.global_read_receipts(
-                Input::new()
-                    .with_prompt("Read-receipt receiver email address")
-                    .interact_text()?,
-            )
-        } else if let Some(read_receipts) = Select::new()
-            .with_prompt("Pick the field with read-receipt receiver email addresses")
-            .items(&reader.headers)
-            .interact_opt()?
-        {
-            map = map.read_receipts(read_receipts)
         }
 
         if Confirm::new()

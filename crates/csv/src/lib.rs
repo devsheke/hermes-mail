@@ -31,6 +31,9 @@ impl Display for DataType {
 #[derive(Default)]
 pub struct ReceiverHeaderMap {
     data: HashMap<usize, String>,
+    subject: Option<String>,
+    plain: Option<PathBuf>,
+    html: Option<PathBuf>,
 }
 
 impl ReceiverHeaderMap {
@@ -68,6 +71,36 @@ impl ReceiverHeaderMap {
         });
         self
     }
+
+    pub fn subject(mut self, i: usize) -> Self {
+        self.data.insert(i, "subject".into());
+        self
+    }
+
+    pub fn plain(mut self, i: usize) -> Self {
+        self.data.insert(i, "plain".into());
+        self
+    }
+
+    pub fn html(mut self, i: usize) -> Self {
+        self.data.insert(i, "html".into());
+        self
+    }
+
+    pub fn global_subject(mut self, s: String) -> Self {
+        self.subject = Some(s);
+        self
+    }
+
+    pub fn global_plain(mut self, s: &Path) -> Self {
+        self.plain = Some(s.to_path_buf());
+        self
+    }
+
+    pub fn global_html(mut self, s: &Path) -> Self {
+        self.html = Some(s.to_path_buf());
+        self
+    }
 }
 
 #[derive(Default)]
@@ -75,10 +108,6 @@ pub struct SenderHeaderMap {
     data: HashMap<usize, String>,
     auth: Option<Mechanism>,
     named_host: Option<String>,
-    subject: Option<String>,
-    plain: Option<PathBuf>,
-    html: Option<PathBuf>,
-    read_receipts: Option<String>,
 }
 
 impl SenderHeaderMap {
@@ -106,53 +135,13 @@ impl SenderHeaderMap {
         self
     }
 
-    pub fn subject(mut self, i: usize) -> Self {
-        self.data.insert(i, "subject".into());
-        self
-    }
-
-    pub fn read_receipts(mut self, i: usize) -> Self {
-        self.data.insert(i, "read_receipts".into());
-        self
-    }
-
-    pub fn plain(mut self, i: usize) -> Self {
-        self.data.insert(i, "plain".into());
-        self
-    }
-
-    pub fn html(mut self, i: usize) -> Self {
-        self.data.insert(i, "html".into());
-        self
-    }
-
-    pub fn global_subject(mut self, s: String) -> Self {
-        self.subject = Some(s);
-        self
-    }
-
     pub fn global_host(mut self, host: String) -> Self {
         self.named_host = Some(host);
         self
     }
 
-    pub fn global_read_receipts(mut self, s: String) -> Self {
-        self.read_receipts = Some(s);
-        self
-    }
-
     pub fn global_auth(mut self, mechanism: Mechanism) -> Self {
         self.auth = Some(mechanism);
-        self
-    }
-
-    pub fn global_plain(mut self, s: &Path) -> Self {
-        self.plain = Some(s.to_path_buf());
-        self
-    }
-
-    pub fn global_html(mut self, s: &Path) -> Self {
-        self.html = Some(s.to_path_buf());
         self
     }
 }
@@ -217,6 +206,9 @@ impl Reader {
         match target {
             "email" => receiver.email = source.into(),
             "sender" => receiver.sender = source.into(),
+            "subject" => receiver.sender = source.into(),
+            "plain" => receiver.plain = source.parse()?,
+            "html" => receiver.html = Some(source.parse()?),
             "cc" => {
                 let mailboxes = Mailboxes::from_str(source)?;
                 match receiver.cc.as_mut() {
@@ -266,10 +258,7 @@ impl Reader {
             "email" => sender.email = source.to_string(),
             "secret" => sender.secret = source.to_string(),
             "host" => sender.host = source.to_string(),
-            "subject" => sender.subject = source.to_string(),
             "auth" => sender.auth = serde_json::from_str(source)?,
-            "plain" => sender.plain = source.parse()?,
-            "html" => sender.html = Some(source.parse()?),
             &_ => {}
         }
 
@@ -324,6 +313,18 @@ impl Reader {
                     None => continue,
                 };
             }
+
+            if let Some(subject) = receiver_map.subject.as_ref() {
+                receiver.subject.clone_from(subject)
+            }
+
+            if let Some(plain) = receiver_map.plain.as_ref() {
+                receiver.plain.clone_from(plain)
+            }
+
+            if let Some(html) = receiver_map.html.as_ref() {
+                receiver.html = Some(html.to_path_buf())
+            }
             receivers.push(receiver);
         }
 
@@ -349,20 +350,8 @@ impl Reader {
                     sender.host.clone_from(host)
                 }
 
-                if let Some(subject) = sender_map.subject.as_ref() {
-                    sender.subject.clone_from(subject)
-                }
-
                 if let Some(auth) = sender_map.auth.as_ref() {
                     sender.auth = *auth
-                }
-
-                if let Some(plain) = sender_map.plain.as_ref() {
-                    sender.plain.clone_from(plain)
-                }
-
-                if let Some(html) = sender_map.html.as_ref() {
-                    sender.html = Some(html.to_path_buf())
                 }
             }
             senders.push(sender);

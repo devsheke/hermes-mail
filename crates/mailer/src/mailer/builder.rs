@@ -1,5 +1,5 @@
 use crate::{
-    data::{self, CodesVec, DashboardConfig, Receivers, Sender},
+    data::{self, CodesVec, DashboardConfig, Receivers, Sender, Senders},
     stats::Stats,
 };
 use chrono::{Duration, Local};
@@ -122,27 +122,6 @@ impl Builder {
         Ok((senders, receivers))
     }
 
-    fn init_senders(
-        senders: Vec<Sender>,
-        content: Option<PathBuf>,
-    ) -> Result<Vec<Arc<Sender>>, BuildError> {
-        senders
-            .into_iter()
-            .map(|mut s| {
-                if let Some(content) = content.as_ref() {
-                    s.plain = content.join(&s.plain);
-                    if let Some(html) = s.html.as_ref() {
-                        s.html = Some(content.join(html));
-                    }
-                }
-
-                s.init_templates().map_err(BuildError::data)?;
-
-                Ok(Arc::new(s))
-            })
-            .collect()
-    }
-
     pub fn build(self) -> Result<super::Mailer, BuildError> {
         let senders = self
             .senders
@@ -152,21 +131,24 @@ impl Builder {
             .receivers
             .ok_or(BuildError::missing_field("sender file".into()))?;
 
-        let (mut senders, receivers) = Builder::read_inputs(senders, receivers)?;
+        let (senders, receivers) = Builder::read_inputs(senders, receivers)?;
 
-        senders.iter_mut().for_each(|s| {
-            s.receivers = receivers
-                .iter()
-                .filter_map(|r| {
-                    if r.sender.eq(&s.email) {
-                        return Some(r.clone());
-                    }
-                    None
-                })
-                .collect()
-        });
+        let mut senders: Senders = senders
+            .into_iter()
+            .map(|mut s| {
+                s.receivers = receivers
+                    .iter()
+                    .filter_map(|r| {
+                        if r.sender.eq(&s.email) {
+                            return Some(r.clone());
+                        }
+                        None
+                    })
+                    .collect();
+                Arc::new(s)
+            })
+            .collect();
 
-        let mut senders = Builder::init_senders(senders, self.content)?;
         senders.sort_unstable_by(|a, b| a.email.partial_cmp(&b.email).unwrap());
 
         let stats = senders

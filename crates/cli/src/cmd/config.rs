@@ -20,17 +20,17 @@ enum ValueKind<T> {
 struct SenderFields {
     email: String,
     password: String,
-    subject: ValueKind<String>,
     host: ValueKind<String>,
     auth: ValueKind<Mechanism>,
-    plain: ValueKind<PathBuf>,
-    html: ValueKind<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ReceiverFields {
     email: String,
     sender: String,
+    subject: ValueKind<String>,
+    plain: ValueKind<PathBuf>,
+    html: Option<ValueKind<PathBuf>>,
     variables: Vec<String>,
 }
 
@@ -68,15 +68,6 @@ impl CSVMap {
             )
             .secret(reader.find_header(&fields.password).unwrap());
 
-        map = match &fields.subject {
-            ValueKind::Global { value } => map.global_subject(value.to_string()),
-            ValueKind::Row { value } => map.subject(
-                reader
-                    .find_header(value)
-                    .ok_or(CSVError::MissingFieldError(value.to_string()))?,
-            ),
-        };
-
         map = match &fields.auth {
             ValueKind::Global { value } => map.global_auth(*value),
             ValueKind::Row { value } => map.auth(
@@ -89,24 +80,6 @@ impl CSVMap {
         map = match &fields.host {
             ValueKind::Global { value } => map.global_host(value.to_string()),
             ValueKind::Row { value } => map.host(
-                reader
-                    .find_header(value)
-                    .ok_or(CSVError::MissingFieldError(value.to_string()))?,
-            ),
-        };
-
-        map = match &fields.plain {
-            ValueKind::Global { value } => map.global_plain(value),
-            ValueKind::Row { value } => map.plain(
-                reader
-                    .find_header(value)
-                    .ok_or(CSVError::MissingFieldError(value.to_string()))?,
-            ),
-        };
-
-        map = match &fields.html {
-            ValueKind::Global { value } => map.global_html(value),
-            ValueKind::Row { value } => map.html(
                 reader
                     .find_header(value)
                     .ok_or(CSVError::MissingFieldError(value.to_string()))?,
@@ -131,7 +104,7 @@ impl CSVMap {
             Reader::new(file)?
         };
 
-        let map = ReceiverHeaderMap::new()
+        let mut map = ReceiverHeaderMap::new()
             .email(
                 reader
                     .find_header(&fields.email)
@@ -149,6 +122,35 @@ impl CSVMap {
                     .filter_map(|f| reader.find_header(f))
                     .collect(),
             );
+
+        map = match &fields.subject {
+            ValueKind::Global { value } => map.global_subject(value.to_string()),
+            ValueKind::Row { value } => map.subject(
+                reader
+                    .find_header(value)
+                    .ok_or(CSVError::MissingFieldError(value.to_string()))?,
+            ),
+        };
+
+        map = match &fields.plain {
+            ValueKind::Global { value } => map.global_plain(value),
+            ValueKind::Row { value } => map.plain(
+                reader
+                    .find_header(value)
+                    .ok_or(CSVError::MissingFieldError(value.to_string()))?,
+            ),
+        };
+
+        if let Some(html) = fields.html.as_ref() {
+            map = match html {
+                ValueKind::Global { value } => map.global_html(value),
+                ValueKind::Row { value } => map.html(
+                    reader
+                        .find_header(value)
+                        .ok_or(CSVError::MissingFieldError(value.to_string()))?,
+                ),
+            }
+        }
 
         let mut file = file.to_owned();
         file.set_file_name("convert_receivers.csv");
