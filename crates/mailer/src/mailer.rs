@@ -6,6 +6,7 @@ use crate::{
     websocket::{self, WebsocketSender},
 };
 use chrono::{DateTime, Datelike, Duration, Local, Timelike};
+use core::time;
 use hermes_messaging;
 use indicatif::ProgressStyle;
 use lettre::transport::smtp::response::Code;
@@ -322,12 +323,13 @@ impl Mailer {
         let instance = dash.instance.clone();
         let tx = inbound_tx.clone();
 
-        websocket::connect_and_listen(
+        tokio::spawn(websocket::connect_and_listen(
             format!("{}/ws/instances/{}", ws_url, instance),
             tx,
             outbound_rx,
-        )
-        .await?;
+        ));
+
+        thread::sleep(time::Duration::try_from_secs_f32(3.5).unwrap());
 
         if let Some(block_checker) = dash.block_checker.as_ref() {
             let dash = dash.to_mini();

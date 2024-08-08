@@ -2,10 +2,7 @@ use futures::{future, pin_mut, stream::StreamExt};
 use hermes_messaging::{Message, MessageKind, MessageSender, SenderType, UnblockRequest};
 use std::process;
 use thiserror::Error;
-use tokio::net::TcpStream;
-use tokio_tungstenite::{
-    connect_async, tungstenite::Message as TMessage, MaybeTlsStream, WebSocketStream,
-};
+use tokio_tungstenite::{connect_async, tungstenite::Message as TMessage};
 use tracing::{error, info, trace};
 
 use crate::stats::Stats;
@@ -107,11 +104,21 @@ impl WebsocketSender {
 pub type SocketChannelSender = futures_channel::mpsc::UnboundedSender<TMessage>;
 pub type SocketChannelReceiver = futures_channel::mpsc::UnboundedReceiver<TMessage>;
 
-async fn listen(
-    ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+pub async fn connect_and_listen(
+    url: String,
     inbound_tx: crossbeam_channel::Sender<Message>,
     outbound_rx: SocketChannelReceiver,
 ) {
+    info!(msg = "establishing websocket connection");
+
+    let (ws_stream, _) = match connect_async(url).await {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!("error: {err}");
+            process::exit(1)
+        }
+    };
+
     let (write, read) = ws_stream.split();
 
     let write_stream = outbound_rx.map(Ok).forward(write);
@@ -145,21 +152,4 @@ async fn listen(
 
     pin_mut!(write_stream, read_stream);
     future::select(write_stream, read_stream).await;
-}
-
-pub async fn connect_and_listen(
-    url: String,
-    inbound_tx: crossbeam_channel::Sender<Message>,
-    outbound_rx: SocketChannelReceiver,
-) -> Result<(), tokio_tungstenite::tungstenite::Error> {
-    info!(msg = "establishing websocket connection");
-
-    let (ws_stream, _) = match connect_async(url).await {
-        Ok(s) => s,
-        Err(err) => return Err(err),
-    };
-
-    tokio::spawn(listen(ws_stream, inbound_tx, outbound_rx));
-
-    return Ok(());
 }
