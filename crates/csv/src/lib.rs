@@ -206,7 +206,7 @@ impl Reader {
         match target {
             "email" => receiver.email = source.into(),
             "sender" => receiver.sender = source.into(),
-            "subject" => receiver.sender = source.into(),
+            "subject" => receiver.subject = source.into(),
             "plain" => receiver.plain = source.parse()?,
             "html" => receiver.html = Some(source.parse()?),
             "cc" => {

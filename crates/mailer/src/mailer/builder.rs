@@ -24,10 +24,6 @@ impl BuildError {
     fn missing_field(s: String) -> Self {
         Self::MissingField(s)
     }
-
-    fn data(err: data::Error) -> Self {
-        Self::Data(err)
-    }
 }
 
 #[derive(Debug, Default)]

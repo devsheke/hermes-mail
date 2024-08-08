@@ -311,25 +311,23 @@ impl Mailer {
         self.stats.iter_mut().for_each(|(_, s)| s.reset_daily());
     }
 
-    fn init_dashboard(
+    async fn init_dashboard(
         &self,
         dash: &DashboardConfig,
         inbound_tx: crossbeam_channel::Sender<hermes_messaging::Message>,
         outbound_tx: websocket::SocketChannelSender,
         outbound_rx: websocket::SocketChannelReceiver,
-    ) -> WebsocketSender {
+    ) -> Result<WebsocketSender, tokio_tungstenite::tungstenite::Error> {
         let ws_url = dash.host.replace("http", "ws");
         let instance = dash.instance.clone();
         let tx = inbound_tx.clone();
 
-        tokio::spawn(async move {
-            websocket::connect_and_listen(
-                format!("{}/ws/instances/{}", ws_url, instance),
-                tx,
-                outbound_rx,
-            )
-            .await
-        });
+        websocket::connect_and_listen(
+            format!("{}/ws/instances/{}", ws_url, instance),
+            tx,
+            outbound_rx,
+        )
+        .await?;
 
         if let Some(block_checker) = dash.block_checker.as_ref() {
             let dash = dash.to_mini();
@@ -344,18 +342,20 @@ impl Mailer {
             );
         }
 
-        WebsocketSender::new(outbound_tx)
+        Ok(WebsocketSender::new(outbound_tx))
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let (inbound_tx, inbound_rx) = crossbeam_channel::unbounded();
         let (outbound_tx, outbound_rx) = futures_channel::mpsc::unbounded();
 
         let mut ws_sender: Option<websocket::WebsocketSender> = None;
 
         if let Some(dash) = self.dashboard_config.as_ref() {
-            ws_sender =
-                Some(self.init_dashboard(dash, inbound_tx, outbound_tx.clone(), outbound_rx));
+            ws_sender = Some(
+                self.init_dashboard(dash, inbound_tx, outbound_tx.clone(), outbound_rx)
+                    .await?,
+            );
         }
 
         let mut cursor = Cursor::new(self.senders.len());
@@ -476,6 +476,8 @@ impl Mailer {
 
         drop(progress_enter);
         drop(progress);
+
+        Ok(())
     }
 
     fn save_progress(&self) {
