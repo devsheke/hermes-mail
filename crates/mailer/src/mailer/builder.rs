@@ -14,6 +14,8 @@ pub enum BuildError {
     MissingField(String),
     #[error("{0}")]
     Data(data::Error),
+    #[error("failed to get mutable reference to underlying receiver value")]
+    EmptyArc,
 }
 
 impl BuildError {
@@ -128,6 +130,26 @@ impl Builder {
             .ok_or(BuildError::missing_field("sender file".into()))?;
 
         let (senders, receivers) = Builder::read_inputs(senders, receivers)?;
+
+        let receivers = receivers
+            .into_iter()
+            .map(|mut r| {
+                let r = match Arc::get_mut(&mut r) {
+                    Some(r) => r,
+                    None => return Err(BuildError::EmptyArc),
+                };
+
+                if let Some(content_dir) = self.content.as_ref() {
+                    r.plain = content_dir.join(&r.plain);
+
+                    if let Some(html) = r.html.as_ref() {
+                        r.html = Some(content_dir.join(html));
+                    }
+                }
+
+                Ok(Arc::new(r.clone()))
+            })
+            .collect::<Result<Receivers, BuildError>>()?;
 
         let mut senders: Senders = senders
             .into_iter()
