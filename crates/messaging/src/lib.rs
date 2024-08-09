@@ -49,7 +49,6 @@ pub struct UnblockRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnblockMessage {
-    pub instance: String,
     pub email: String,
     pub unblock: bool,
     pub timeout: i64,
