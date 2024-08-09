@@ -261,9 +261,10 @@ impl BlockChecker for ImapBlockChecker {
 
 #[cfg(test)]
 mod tests {
-    use crate::data::{self, DashboardConfig};
-
     use super::{BlockChecker, ImapBlockChecker, Sender};
+    use crate::data::{self, DashboardConfig};
+    use hermes_messaging::UnblockRequest;
+    use reqwest::blocking::Client as Reqwest;
     use std::{
         env::{self, var},
         sync::Arc,
@@ -314,7 +315,7 @@ mod tests {
             host: env::var("DOMAIN")?,
             email: env::var("USER")?,
             password: env::var("PASSWORD")?,
-            subject_queries: vec![],
+            subject_queries: vec![env::var("SUBJECT")?],
             body_queries: vec![env::var("QUERY")?],
         };
 
@@ -329,6 +330,24 @@ mod tests {
 
         let handle = test_data.query_block_status(senders, dash, tx);
         handle.join().unwrap();
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_imap_unblock_req() -> Result<(), Box<dyn std::error::Error>> {
+        let body = UnblockRequest {
+            instance: env::var("ID")?,
+            email: env::var("EMAIL")?,
+            password: env::var("PASSWORD")?,
+            should_unblock: true,
+        };
+
+        Reqwest::new()
+            .post(env::var("URL")?)
+            .bearer_auth(env::var("KEY")?)
+            .json(&body)
+            .send()?;
 
         Ok(())
     }
