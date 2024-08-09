@@ -3,7 +3,7 @@ use hermes_messaging::{Message, MessageKind, MessageSender, SenderType, UnblockR
 use std::process;
 use thiserror::Error;
 use tokio_tungstenite::{connect_async, tungstenite::Message as TMessage};
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 
 use crate::stats::Stats;
 
@@ -142,6 +142,11 @@ pub async fn connect_and_listen(
                 return;
             }
         };
+
+        if message.kind == hermes_messaging::MessageKind::Stop {
+            warn!(msg = "received stop signal. stopping task.");
+            process::exit(0);
+        }
 
         inbound_tx
             .send(message)
