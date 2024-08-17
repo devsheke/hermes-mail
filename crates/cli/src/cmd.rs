@@ -2,6 +2,7 @@ use clap::{ArgAction::SetTrue, Args, Parser, Subcommand};
 use dialoguer::{Confirm, Input, MultiSelect, Select};
 use hermes_csv::{Reader, ReceiverHeaderMap, SenderHeaderMap};
 use lettre::transport::smtp::authentication::Mechanism;
+use serde_json;
 use std::path::PathBuf;
 
 pub mod config;
@@ -77,7 +78,7 @@ impl ConvertCommand {
         );
 
         if let Some(pos) = MultiSelect::new()
-            .with_prompt("Pick fields with Cc (optional)")
+            .with_prompt("Pick fields with Cc emails (optional)")
             .items(&reader.headers)
             .interact_opt()?
         {
@@ -85,7 +86,7 @@ impl ConvertCommand {
         }
 
         if let Some(pos) = MultiSelect::new()
-            .with_prompt("Pick fields with Bcc (optional)")
+            .with_prompt("Pick fields with Bcc emails (optional)")
             .items(&reader.headers)
             .interact_opt()?
         {
@@ -93,7 +94,7 @@ impl ConvertCommand {
         }
 
         if let Some(pos) = MultiSelect::new()
-            .with_prompt("Pick fields with variables")
+            .with_prompt("Pick fields variable fields")
             .items(&reader.headers)
             .interact_opt()?
         {
@@ -101,15 +102,6 @@ impl ConvertCommand {
         }
 
         reader.convert_receivers(map, self.output)
-    }
-
-    fn mechanism_fromstr(s: &str) -> Result<Mechanism, String> {
-        match s.to_lowercase().trim() {
-            "plain" => Ok(Mechanism::Plain),
-            "login" => Ok(Mechanism::Login),
-            "xoauth2" => Ok(Mechanism::Xoauth2),
-            &_ => Err(format!("unknown mechanism: {s}")),
-        }
     }
 
     fn sender_prompt(self, reader: Reader) -> Result<(), super::StdError> {
@@ -151,22 +143,37 @@ impl ConvertCommand {
             .interact()?
         {
             map = map.global_subject(Input::new().with_prompt("Email subject").interact_text()?)
-        } else if let Some(host) = Select::new()
+        } else if let Some(subject) = Select::new()
             .with_prompt("Pick the field with the subjects")
             .items(&reader.headers)
             .interact_opt()?
         {
-            map = map.subject(host)
+            map = map.subject(subject)
         }
 
         if Confirm::new()
-            .with_prompt("Do you want to set the login mechanism for all senders?")
+            .with_prompt("Do you want to set the same authentication mechanism for all senders?")
             .interact()?
         {
-            let mechanism: String = Input::new()
+            let mechanisims = vec![Mechanism::Login, Mechanism::Plain];
+
+            let idx = Select::new()
                 .with_prompt("SMTP AUTH mechanism")
-                .interact_text()?;
-            map = map.global_auth(ConvertCommand::mechanism_fromstr(&mechanism)?);
+                .items(
+                    &mechanisims
+                        .iter()
+                        .map(serde_json::to_string)
+                        .collect::<Result<Vec<String>, serde_json::Error>>()?,
+                )
+                .interact()?;
+
+            map = map.global_auth(mechanisims[idx]);
+        } else if let Some(mech) = Select::new()
+            .with_prompt("Pick the field with the subjects")
+            .items(&reader.headers)
+            .interact_opt()?
+        {
+            map = map.auth(mech)
         }
 
         reader.convert_senders(map, self.output)
