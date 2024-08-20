@@ -2,7 +2,6 @@ use clap::{ArgAction::SetTrue, Args, Parser, Subcommand};
 use dialoguer::{Confirm, Input, MultiSelect, Select};
 use hermes_csv::{Reader, ReceiverHeaderMap, SenderHeaderMap};
 use lettre::transport::smtp::authentication::Mechanism;
-use serde_json;
 use std::path::PathBuf;
 
 pub mod config;
@@ -72,10 +71,59 @@ impl ConvertCommand {
 
         map = map.sender(
             Select::new()
-                .with_prompt("Pick field with senders")
+                .with_prompt("Pick field with corresponding senders")
                 .items(&reader.headers)
                 .interact()?,
         );
+
+        if Confirm::new()
+            .with_prompt("Do you want to set the same subject for all receivers?")
+            .interact()?
+        {
+            map = map.global_subject(Input::new().with_prompt("Email subject").interact_text()?)
+        } else if let Some(subject) = Select::new()
+            .with_prompt("Pick the field with the subjects")
+            .items(&reader.headers)
+            .interact_opt()?
+        {
+            map = map.subject(subject)
+        }
+
+        if Confirm::new()
+            .with_prompt("Do you want to set the same plaintext email body for all receivers?")
+            .interact()?
+        {
+            map = map.global_plain(
+                Input::<String>::new()
+                    .with_prompt("Plaintext email file")
+                    .interact_text()?
+                    .parse()?,
+            )
+        } else if let Some(plain) = Select::new()
+            .with_prompt("Pick the field plaintext email files")
+            .items(&reader.headers)
+            .interact_opt()?
+        {
+            map = map.plain(plain)
+        }
+
+        if Confirm::new()
+            .with_prompt("Do you want to set the same formatted email body for all receivers?")
+            .interact()?
+        {
+            map = map.global_plain(
+                Input::<String>::new()
+                    .with_prompt("Formatted email file")
+                    .interact_text()?
+                    .parse()?,
+            )
+        } else if let Some(plain) = Select::new()
+            .with_prompt("Pick the field formatted email files")
+            .items(&reader.headers)
+            .interact_opt()?
+        {
+            map = map.plain(plain)
+        }
 
         if let Some(pos) = MultiSelect::new()
             .with_prompt("Pick fields with Cc emails (optional)")
@@ -139,23 +187,10 @@ impl ConvertCommand {
         }
 
         if Confirm::new()
-            .with_prompt("Do you want to set the same subject for all senders?")
-            .interact()?
-        {
-            map = map.global_subject(Input::new().with_prompt("Email subject").interact_text()?)
-        } else if let Some(subject) = Select::new()
-            .with_prompt("Pick the field with the subjects")
-            .items(&reader.headers)
-            .interact_opt()?
-        {
-            map = map.subject(subject)
-        }
-
-        if Confirm::new()
             .with_prompt("Do you want to set the same authentication mechanism for all senders?")
             .interact()?
         {
-            let mechanisims = vec![Mechanism::Login, Mechanism::Plain];
+            let mechanisims = [Mechanism::Login, Mechanism::Plain];
 
             let idx = Select::new()
                 .with_prompt("SMTP AUTH mechanism")

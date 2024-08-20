@@ -1,5 +1,5 @@
 use crate::data::{Receiver, Sender, TemplateVariables};
-use handlebars::RenderError;
+use handlebars::{RenderError, TemplateError};
 use lettre::{
     address::AddressError,
     message::{
@@ -10,6 +10,7 @@ use lettre::{
     Message, SmtpTransport, Transport,
 };
 use std::{
+    path::PathBuf,
     sync::Arc,
     thread::{self, JoinHandle},
 };
@@ -23,6 +24,12 @@ pub enum Error {
     Address { task: Task, err: AddressError },
     #[error("could not render message for: {task:#?}; error: {err}")]
     Render { task: Task, err: RenderError },
+    #[error("could not register template file for: {task:#?}; file: {file}; error: {err}")]
+    Register {
+        task: Task,
+        err: TemplateError,
+        file: PathBuf,
+    },
     #[error("could build email message for: {task:#?}; error: {err}")]
     MessageBuild {
         task: Task,
@@ -52,7 +59,7 @@ impl Task {
         let (sender, receiver, empty) =
             (&self.sender, &self.receiver, TemplateVariables::default());
 
-        let templates = sender.templates.as_ref().unwrap();
+        let mut templates = handlebars::Handlebars::new();
         let variables = &receiver.variables.as_ref().unwrap_or(&empty).0;
 
         let sender_mbox: Mailbox = match sender.email.parse() {
@@ -65,7 +72,7 @@ impl Task {
             Err(err) => return Err(Error::Address { task: self, err }),
         };
 
-        let subject = match templates.render("subject", &variables) {
+        let subject = match templates.render_template(&receiver.subject, &variables) {
             Ok(s) => s,
             Err(err) => return Err(Error::Render { task: self, err }),
         };
@@ -87,18 +94,38 @@ impl Task {
             }
         }
 
+        let plain = receiver.plain.as_ref().unwrap().to_path_buf();
+        if let Err(err) = templates.register_template_file("plain", &plain) {
+            return Err(Error::Register {
+                task: self,
+                file: plain,
+                err,
+            });
+        };
+
         let plain = match templates.render("plain", variables) {
             Ok(p) => p,
             Err(err) => return Err(Error::Render { task: self, err }),
         };
 
-        let mut msg = if templates.has_template("html") {
-            let html = match templates.render("html", &variables) {
+        if let Some(formatted) = receiver.formatted.as_ref() {
+            let formatted = formatted.to_path_buf();
+            if let Err(err) = templates.register_template_file("formatted", &formatted) {
+                return Err(Error::Register {
+                    task: self,
+                    file: formatted,
+                    err,
+                });
+            }
+        }
+
+        let mut msg = if templates.has_template("formatted") {
+            let formatted = match templates.render("formatted", &variables) {
                 Ok(h) => h,
                 Err(err) => return Err(Error::Render { task: self, err }),
             };
 
-            match builder.multipart(MultiPart::alternative_plain_html(plain, html)) {
+            match builder.multipart(MultiPart::alternative_plain_html(plain, formatted)) {
                 Ok(m) => m,
                 Err(err) => return Err(Error::MessageBuild { task: self, err }),
             }

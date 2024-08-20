@@ -1,8 +1,9 @@
 use crate::{
-    data::{self, CodesVec, DashboardConfig, Receivers, Sender},
+    data::{self, CodesVec, DashboardConfig, Receiver, Receivers, Sender, Senders},
     stats::Stats,
 };
 use chrono::{Duration, Local};
+use pandoc::PandocError;
 use std::{path::PathBuf, sync::Arc};
 use thiserror::Error;
 
@@ -12,8 +13,12 @@ pub enum BuildError {
     Csv { file: PathBuf, err: csv::Error },
     #[error("queue is missing field: '{0}'")]
     MissingField(String),
-    #[error("{0}")]
-    Data(data::Error),
+    #[error("receiver \"{0}\" is missing both plain and formatted templates. a plain message body is required!")]
+    MissingTemplate(String),
+    #[error("unsupported template format: {0}")]
+    UnsupportedTemplate(String),
+    #[error("could not convert formatted template: {file}; err: {err}")]
+    PandocConvert { file: PathBuf, err: PandocError },
 }
 
 impl BuildError {
@@ -23,10 +28,6 @@ impl BuildError {
 
     fn missing_field(s: String) -> Self {
         Self::MissingField(s)
-    }
-
-    fn data(err: data::Error) -> Self {
-        Self::Data(err)
     }
 }
 
@@ -111,7 +112,7 @@ impl Builder {
     fn read_inputs(
         senders: PathBuf,
         receivers: PathBuf,
-    ) -> Result<(Vec<Sender>, Receivers), BuildError> {
+    ) -> Result<(Vec<Sender>, Vec<Receiver>), BuildError> {
         let senders = data::read_senders(&senders).map_err(|err| BuildError::csv(senders, err))?;
 
         let receivers = data::read_receivers(&receivers).map_err(|err| BuildError::Csv {
@@ -120,27 +121,6 @@ impl Builder {
         })?;
 
         Ok((senders, receivers))
-    }
-
-    fn init_senders(
-        senders: Vec<Sender>,
-        content: Option<PathBuf>,
-    ) -> Result<Vec<Arc<Sender>>, BuildError> {
-        senders
-            .into_iter()
-            .map(|mut s| {
-                if let Some(content) = content.as_ref() {
-                    s.plain = content.join(&s.plain);
-                    if let Some(html) = s.html.as_ref() {
-                        s.html = Some(content.join(html));
-                    }
-                }
-
-                s.init_templates().map_err(BuildError::data)?;
-
-                Ok(Arc::new(s))
-            })
-            .collect()
     }
 
     pub fn build(self) -> Result<super::Mailer, BuildError> {
@@ -152,21 +132,43 @@ impl Builder {
             .receivers
             .ok_or(BuildError::missing_field("sender file".into()))?;
 
-        let (mut senders, receivers) = Builder::read_inputs(senders, receivers)?;
+        let (senders, receivers) = Builder::read_inputs(senders, receivers)?;
 
-        senders.iter_mut().for_each(|s| {
-            s.receivers = receivers
-                .iter()
-                .filter_map(|r| {
-                    if r.sender.eq(&s.email) {
-                        return Some(r.clone());
+        let receivers = receivers
+            .into_iter()
+            .map(|mut r| {
+                if r.plain.is_none() && r.formatted.is_none() {
+                    return Err(BuildError::MissingTemplate(r.email));
+                }
+
+                if let Some(file) = r.formatted.as_ref() {
+                    let converted_file = r.formatted.insert(convert_to_html(file.clone())?);
+                    if r.plain.is_none() {
+                        r.plain = Some(html_to_plain(converted_file.clone())?);
                     }
-                    None
-                })
-                .collect()
-        });
+                }
 
-        let mut senders = Builder::init_senders(senders, self.content)?;
+                Ok(Arc::new(r))
+            })
+            .collect::<Result<Receivers, BuildError>>()?;
+
+        let mut senders: Senders = senders
+            .into_iter()
+            .map(|mut s| {
+                s.receivers = receivers
+                    .iter()
+                    .filter_map(|r| {
+                        if r.sender.eq(&s.email) {
+                            return Some(r.clone());
+                        }
+                        None
+                    })
+                    .collect();
+
+                Arc::new(s)
+            })
+            .collect();
+
         senders.sort_unstable_by(|a, b| a.email.partial_cmp(&b.email).unwrap());
 
         let stats = senders
@@ -197,4 +199,45 @@ impl Builder {
             workers,
         })
     }
+}
+
+fn convert_to_html(file: PathBuf) -> Result<PathBuf, BuildError> {
+    let ext = match file.extension() {
+        Some(e) => e,
+        None => return Err(BuildError::UnsupportedTemplate("{unknown}".into())),
+    };
+
+    match ext.to_str() {
+        Some("html") => Ok(file),
+        Some("md") | Some("docx") => {
+            let mut outfile = file.clone();
+            outfile.set_extension("html");
+
+            let mut pandoc = pandoc::new();
+            pandoc.add_input(&file);
+            pandoc.set_output(pandoc::OutputKind::File(outfile.clone()));
+            if let Err(err) = pandoc.execute() {
+                return Err(BuildError::PandocConvert { file, err });
+            }
+
+            Ok(outfile)
+        }
+        Some(_) | None => Err(BuildError::UnsupportedTemplate(
+            ext.to_string_lossy().to_string(),
+        )),
+    }
+}
+
+fn html_to_plain(file: PathBuf) -> Result<PathBuf, BuildError> {
+    let mut outfile = file.clone();
+    outfile.set_extension("txt");
+
+    let mut pandoc = pandoc::new();
+    pandoc.add_input(&file);
+    pandoc.set_output(pandoc::OutputKind::File(outfile.clone()));
+    if let Err(err) = pandoc.execute() {
+        return Err(BuildError::PandocConvert { file, err });
+    }
+
+    Ok(outfile)
 }
