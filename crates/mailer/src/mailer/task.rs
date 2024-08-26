@@ -18,24 +18,24 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("could not build transport for task: {task:#?}; error: {err}")]
+    #[error("could not build transport for task: {task}; error: {err}")]
     Transport { task: Task, err: smtp::Error },
-    #[error("could not parse 'to'/'from' email for task: {task:#?}; error: {err}")]
+    #[error("could not parse 'to'/'from' email for task: {task}; error: {err}")]
     Address { task: Task, err: AddressError },
-    #[error("could not render message for: {task:#?}; error: {err}")]
+    #[error("could not render message for task: {task}; error: {err}")]
     Render { task: Task, err: RenderError },
-    #[error("could not register template file for: {task:#?}; file: {file}; error: {err}")]
+    #[error("could not register template file for task: {task}; file: {file}; error: {err}")]
     Register {
         task: Task,
         err: TemplateError,
-        file: PathBuf,
+        file: Box<PathBuf>,
     },
-    #[error("could build email message for: {task:#?}; error: {err}")]
+    #[error("could build email message for: {task}; error: {err}")]
     MessageBuild {
         task: Task,
         err: lettre::error::Error,
     },
-    #[error("send error for: {task:#?}; error: {err}")]
+    #[error("send error for: {task}; error: {err}")]
     Send { task: Task, err: smtp::Error },
 }
 
@@ -43,6 +43,16 @@ pub enum Error {
 pub struct Task {
     pub sender: Arc<Sender>,
     pub receiver: Arc<Receiver>,
+}
+
+impl std::fmt::Display for Task {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "sender: {}; receiver: {}",
+            self.sender.email, self.receiver.email
+        )
+    }
 }
 
 pub type TaskResult = Result<Task, Error>;
@@ -98,7 +108,7 @@ impl Task {
         if let Err(err) = templates.register_template_file("plain", &plain) {
             return Err(Error::Register {
                 task: self,
-                file: plain,
+                file: Box::new(plain),
                 err,
             });
         };
@@ -113,7 +123,7 @@ impl Task {
             if let Err(err) = templates.register_template_file("formatted", &formatted) {
                 return Err(Error::Register {
                     task: self,
-                    file: formatted,
+                    file: Box::new(formatted),
                     err,
                 });
             }

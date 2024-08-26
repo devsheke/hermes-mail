@@ -1,8 +1,6 @@
-use crate::{
-    data::{self, CodesVec, DashboardConfig, Receiver, Receivers, Sender, Senders},
-    stats::Stats,
-};
+use crate::data::{self, CodesVec, DashboardConfig, Receiver, Receivers, Sender, Senders};
 use chrono::{Duration, Local};
+use hermes_messaging::stats::Stats;
 use pandoc::PandocError;
 use std::{path::PathBuf, sync::Arc};
 use thiserror::Error;
@@ -186,6 +184,7 @@ impl Builder {
             daily_limit: self.daily_limit,
             dashboard_config: self.dashboard_config,
             failures,
+            messenger: None,
             rate: self.rate,
             read_receipts: self.read_receipts,
             receivers_len: receivers.len(),

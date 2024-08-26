@@ -3,14 +3,14 @@ use serde::Serialize;
 use tracing::debug;
 
 #[derive(Debug, Serialize, Default)]
-pub(crate) struct Stats {
+pub struct Stats {
     pub bounced: u64,
     pub blocked: bool,
     pub email: String,
-    #[serde(skip_serializing)]
-    pub timeout: Option<DateTime<Local>>,
     pub today: u32,
     pub total: u64,
+    #[serde(skip_serializing)]
+    pub timeout: Option<DateTime<Local>>,
 }
 
 impl Stats {

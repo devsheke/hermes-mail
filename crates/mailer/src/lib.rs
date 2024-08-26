@@ -4,5 +4,3 @@
 
 pub mod data;
 pub mod mailer;
-pub(crate) mod stats;
-pub(crate) mod websocket;
