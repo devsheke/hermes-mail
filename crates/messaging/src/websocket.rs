@@ -37,10 +37,17 @@ impl WSMessenger {
         Ok(())
     }
 
+    pub fn send_pong(&self) -> Result<(), futures_channel::mpsc::TrySendError<TungsteniteMessage>> {
+        if let Some(tx) = &self.outbound_tx {
+            WSMessenger::pong(tx.clone())?;
+        }
+        Ok(())
+    }
+
     pub async fn connect(
         &mut self,
         url: &str,
-    ) -> Result<WSChannelSender, tokio_tungstenite::tungstenite::Error> {
+    ) -> Result<crossbeam_channel::Sender<Message>, tokio_tungstenite::tungstenite::Error> {
         info!(msg = "establishing websocket connection");
         let (ws_stream, _) = connect_async(url).await?;
 
@@ -59,7 +66,23 @@ impl WSMessenger {
                 };
 
                 let data = match raw_message {
-                    Ok(d) => d.into_text().unwrap_or(String::new()),
+                    Ok(d) => match d {
+                        TungsteniteMessage::Text(t) => t,
+                        TungsteniteMessage::Ping(_) | TungsteniteMessage::Pong(_) => {
+                            if let Err(err) = WSMessenger::pong(_tx.clone()) {
+                                error!(
+                                    msg = "failed to send pong to server",
+                                    err = format!("{err}")
+                                );
+                            }
+                            continue;
+                        }
+                        TungsteniteMessage::Close(_) => {
+                            warn!(msg = "socket connection closed; exiting program.");
+                            process::exit(0);
+                        }
+                        _ => continue,
+                    },
                     Err(err) => {
                         error!(msg = "socket read err", err = format!("{err}"));
                         continue;
@@ -106,13 +129,13 @@ impl WSMessenger {
             future::select(write_stream, read_stream).await;
         });
 
-        Ok(tx)
+        Ok(self.inbound_tx.clone())
     }
 }
 
 impl super::MessengerDispatch for WSMessenger {
     async fn send_message(&self, msg: crate::Message) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(tx) = self.outbound_tx.as_ref() {
+        if let Some(tx) = &self.outbound_tx {
             let msg: String = serde_json::to_string(&msg)?;
             tx.unbounded_send(TungsteniteMessage::Text(msg))?;
         } else {
@@ -138,13 +161,13 @@ mod tests {
     async fn test_socket_conn() -> Result<(), Box<dyn std::error::Error>> {
         let mut messenger = WSMessenger::new();
 
-        let tx = messenger.connect(&env::var("URL")?).await?;
+        let _ = messenger.connect(&env::var("URL")?).await?;
 
         let mut count = 0;
         loop {
             count += 1;
             println!("sending pong: {count}");
-            tx.unbounded_send(super::TungsteniteMessage::Pong(vec![]))?;
+            messenger.send_pong()?;
             thread::sleep(Duration::from_secs(env::var("TIMEOUT")?.parse()?));
         }
     }
