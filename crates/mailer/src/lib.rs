@@ -2,5 +2,6 @@
 //! email messages in bulk. This library implements a highly configurable mail
 //! transport queue in order to send emails.
 
+mod block_query;
 pub mod data;
 pub mod mailer;

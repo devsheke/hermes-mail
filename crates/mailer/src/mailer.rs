@@ -1,5 +1,8 @@
 use self::task::Task;
-use crate::data::{DashboardConfig, Receivers, Sender, Senders};
+use crate::{
+    block_query::{self, BlockQuerier},
+    data::{DashboardConfig, Receivers, Sender, Senders},
+};
 use chrono::{DateTime, Datelike, Duration, Local, Timelike};
 use hermes_messaging::{stats::Stats, websocket::WSMessenger, Messenger, MessengerDispatch};
 use indicatif::ProgressStyle;
@@ -97,8 +100,8 @@ impl Mailer {
                         receiver = task.receiver.email
                     );
 
-                    if let Some(dash) = self.dashboard_config.as_ref() {
-                        if let Some(messenger) = self.messenger.as_ref() {
+                    if let Some(dash) = &self.dashboard_config {
+                        if let Some(messenger) = &self.messenger {
                             let message = match hermes_messaging::Message::new_sender_stats(
                                 dash.instance.clone(),
                                 dash.user.clone(),
@@ -145,8 +148,8 @@ impl Mailer {
                             if self.block_permanent {
                                 stats.block();
 
-                                if let Some(dash) = self.dashboard_config.as_ref() {
-                                    if let Some(messenger) = self.messenger.as_ref() {
+                                if let Some(dash) = &self.dashboard_config {
+                                    if let Some(messenger) = &self.messenger {
                                         let res = messenger
                                             .send_message(hermes_messaging::Message::new_block(
                                                 dash.instance.clone(),
@@ -169,8 +172,8 @@ impl Mailer {
                                 stats.block();
                                 stats.inc_bounced(1);
 
-                                if let Some(dash) = self.dashboard_config.as_ref() {
-                                    if let Some(messenger) = self.messenger.as_ref() {
+                                if let Some(dash) = &self.dashboard_config {
+                                    if let Some(messenger) = &self.messenger {
                                         let res = messenger
                                             .send_message(hermes_messaging::Message::new_block(
                                                 dash.instance.clone(),
@@ -190,8 +193,8 @@ impl Mailer {
                             }
                         }
 
-                        if let Some(dash) = self.dashboard_config.as_ref() {
-                            if let Some(messenger) = self.messenger.as_ref() {
+                        if let Some(dash) = &self.dashboard_config {
+                            if let Some(messenger) = &self.messenger {
                                 let message = match hermes_messaging::Message::new_sender_stats(
                                     dash.instance.clone(),
                                     dash.user.clone(),
@@ -272,7 +275,7 @@ impl Mailer {
 
     async fn read_messages(&mut self) {
         debug!(msg = "reading inbound messages");
-        let messenger = match self.messenger.as_ref() {
+        let messenger = match &self.messenger {
             Some(m) => m,
             None => return,
         };
@@ -289,9 +292,53 @@ impl Mailer {
                         sender.unblock();
                     }
                 }
+                hermes_messaging::MessageKind::LocalBlock => {
+                    let data: block_query::UserCredentials =
+                        serde_json::from_str(&message.data).unwrap();
+
+                    if let Some(sender) = self.stats.get_mut(&data.email) {
+                        sender.block();
+                    }
+
+                    if let Some(dash) = &self.dashboard_config {
+                        if let Err(err) = Self::send_unblock_request(dash, &data).await {
+                            warn!(
+                                msg = "failed to unblock sender",
+                                sender = data.email,
+                                err = format!("{err}")
+                            );
+                        }
+                    }
+                }
                 _ => continue,
             }
         }
+    }
+
+    async fn send_unblock_request(
+        dash: &DashboardConfig,
+        user: &block_query::UserCredentials,
+    ) -> Result<(), reqwest::Error> {
+        let unblock_url = match &dash.unblock_url {
+            Some(url) => url,
+            None => return Ok(()),
+        };
+
+        let body = hermes_messaging::UnblockRequest {
+            email: user.email.clone(),
+            password: user.password.clone(),
+            instance: dash.instance.clone(),
+            should_unblock: true,
+        };
+
+        let req = reqwest::Client::new()
+            .post(unblock_url)
+            .bearer_auth("")
+            .json(&body);
+
+        let _ = req.send().await?;
+
+        Ok(())
     }
 
     fn reset_daily_lim(&mut self) {
@@ -301,7 +348,7 @@ impl Mailer {
     }
 
     async fn init_dashboard(&mut self) -> Result<(), Error> {
-        let dash = match self.dashboard_config.as_ref() {
+        let dash = match &self.dashboard_config {
             None => return Ok(()),
             Some(d) => d,
         };
@@ -312,12 +359,16 @@ impl Mailer {
         let mut ws = WSMessenger::new();
 
         let url = format!("{}/ws/instances/{}", ws_url, instance);
-        let _ = ws
+        let tx = ws
             .connect(&url)
             .await
             .map_err(|err| Error::MessengerConnection(Box::new(err), url))?;
 
         self.messenger = Some(Messenger::WS(ws));
+
+        if let Some(b) = dash.block_querier.clone() {
+            let _ = b.query_block(self.senders.clone(), tx);
+        }
 
         Ok(())
     }
@@ -455,8 +506,8 @@ impl Mailer {
     }
 
     async fn send_task_stats(&self, sent: usize) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(dash) = self.dashboard_config.as_ref() {
-            if let Some(messenger) = self.messenger.as_ref() {
+        if let Some(dash) = &self.dashboard_config {
+            if let Some(messenger) = &self.messenger {
                 messenger
                     .send_message(hermes_messaging::Message::new_task_stats(
                         dash.instance.clone(),

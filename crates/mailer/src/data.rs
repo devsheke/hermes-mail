@@ -10,6 +10,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use thiserror::Error;
 
+use crate::block_query;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("expected: key=value pairs for variables; got: {data}")]
@@ -74,6 +76,8 @@ pub struct DashboardConfig {
     pub api_key: String,
     pub user: String,
     pub instance: String,
+    pub unblock_url: Option<String>,
+    pub block_querier: Option<block_query::BlockQueriers>,
 }
 
 pub type Senders = Vec<Arc<Sender>>;
