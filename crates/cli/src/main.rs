@@ -7,7 +7,7 @@ mod logging;
 
 type StdError = Box<dyn std::error::Error>;
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     let cmd = cmd::Cmd::parse();
 
