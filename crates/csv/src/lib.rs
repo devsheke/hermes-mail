@@ -307,15 +307,15 @@ impl Reader {
                 };
             }
 
-            if let Some(subject) = receiver_map.subject.as_ref() {
+            if let Some(subject) = &receiver_map.subject {
                 receiver.subject.clone_from(subject)
             }
 
-            if let Some(plain) = receiver_map.plain.as_ref() {
+            if let Some(plain) = &receiver_map.plain {
                 receiver.plain = Some(plain.to_path_buf())
             }
 
-            if let Some(formatted) = receiver_map.formatted.as_ref() {
+            if let Some(formatted) = &receiver_map.formatted {
                 receiver.formatted = Some(formatted.to_path_buf())
             }
 
@@ -340,11 +340,11 @@ impl Reader {
                     Reader::map_sender_fields(source, target, &mut sender)?
                 }
 
-                if let Some(host) = sender_map.host.as_ref() {
+                if let Some(host) = &sender_map.host {
                     sender.host.clone_from(host)
                 }
 
-                if let Some(auth) = sender_map.auth.as_ref() {
+                if let Some(auth) = &sender_map.auth {
                     sender.auth = *auth
                 }
             }

@@ -188,12 +188,12 @@ impl Config {
 
     pub fn convert(&mut self) -> Result<(), StdError> {
         let csv = self.csv.as_ref().unwrap();
-        if let Some(sender) = csv.sender.as_ref() {
+        if let Some(sender) = &csv.sender {
             self.mailer.senders =
                 CSVMap::convert_sender_file(sender, &self.mailer.senders, csv.sanitize)?
         }
 
-        if let Some(recv) = csv.receiver.as_ref() {
+        if let Some(recv) = &csv.receiver {
             self.mailer.receivers =
                 CSVMap::convert_receiver_file(recv, &self.mailer.receivers, csv.sanitize)?;
         }
