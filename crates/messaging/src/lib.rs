@@ -14,6 +14,7 @@ pub enum MessageKind {
     #[default]
     Empty,
     Error,
+    LocalBlock,
     SenderStats,
     Stop,
     TaskStats,
@@ -80,10 +81,10 @@ impl Message {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnblockRequest {
-    instance: String,
-    email: String,
-    password: String,
-    should_unblock: bool,
+    pub instance: String,
+    pub email: String,
+    pub password: String,
+    pub should_unblock: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
