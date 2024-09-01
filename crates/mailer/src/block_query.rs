@@ -29,7 +29,7 @@ impl From<&Arc<crate::data::Sender>> for UserCredentials {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", tag = "type", content = "value")]
 pub enum BlockQueriers {
     Imap(imap_query::ImapQuerier),
 }
