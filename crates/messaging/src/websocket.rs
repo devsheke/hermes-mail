@@ -89,14 +89,6 @@ impl WSMessenger {
                     }
                 };
 
-                if let Err(err) = WSMessenger::pong(_tx.clone()) {
-                    error!(
-                        msg = "failed to send pong to server",
-                        err = format!("{err}")
-                    );
-                    continue;
-                }
-
                 if data.is_empty() {
                     continue;
                 }
