@@ -72,7 +72,7 @@ impl<'de> Deserialize<'de> for CodesVec {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct DashboardConfig {
-    pub host: String,
+    pub domain: String,
     pub api_key: String,
     pub user: String,
     pub instance: String,

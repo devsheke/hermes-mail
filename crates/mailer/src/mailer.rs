@@ -273,14 +273,16 @@ impl Mailer {
         }
     }
 
-    async fn read_messages(&mut self) {
+    async fn read_messages(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         debug!(msg = "reading inbound messages");
         let messenger = match &self.messenger {
             Some(m) => m,
-            None => return,
+            None => return Ok(()),
         };
 
-        for message in messenger.get_new_messages().await.unwrap() {
+        let messages = messenger.get_new_messages().await?;
+
+        for message in messages {
             match message.kind {
                 hermes_messaging::MessageKind::Block => {
                     if let Some(sender) = self.stats.get_mut(&message.data) {
@@ -313,6 +315,8 @@ impl Mailer {
                 _ => continue,
             }
         }
+
+        Ok(())
     }
 
     async fn send_unblock_request(
@@ -353,7 +357,7 @@ impl Mailer {
             Some(d) => d,
         };
 
-        let ws_url = dash.host.replace("http", "ws");
+        let ws_url = dash.domain.replace("http", "ws");
         let instance = dash.instance.clone();
 
         let mut ws = WSMessenger::new();
@@ -482,7 +486,11 @@ impl Mailer {
                 };
             }
 
-            self.read_messages().await;
+            if let Err(err) = self.read_messages().await {
+                error!(msg = "failed to receieve messages", err = format!("{err}"));
+                continue;
+            }
+
             if self.save_progress {
                 self.save_progress();
             }
