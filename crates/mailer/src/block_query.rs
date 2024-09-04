@@ -1,7 +1,6 @@
 use crate::data::Senders;
 use hermes_messaging::Message;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 pub mod imap_query;
 
@@ -11,21 +10,6 @@ pub trait BlockQuerier {
         senders: Senders,
         tx: crossbeam_channel::Sender<Message>,
     ) -> Result<(), Box<dyn std::error::Error>>;
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UserCredentials {
-    pub email: String,
-    pub password: String,
-}
-
-impl From<&Arc<crate::data::Sender>> for UserCredentials {
-    fn from(value: &Arc<crate::data::Sender>) -> Self {
-        Self {
-            email: value.email.clone(),
-            password: value.secret.clone(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

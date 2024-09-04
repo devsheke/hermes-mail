@@ -1,6 +1,6 @@
 use self::task::Task;
 use crate::{
-    block_query::{self, BlockQuerier},
+    block_query::BlockQuerier,
     data::{DashboardConfig, Receivers, Sender, Senders},
 };
 use chrono::{DateTime, Datelike, Duration, Local, Timelike};
@@ -295,14 +295,37 @@ impl Mailer {
                     }
                 }
                 hermes_messaging::MessageKind::LocalBlock => {
-                    let data: block_query::UserCredentials =
+                    let data: hermes_messaging::LocalBlockMessage =
                         serde_json::from_str(&message.data).unwrap();
 
-                    if let Some(sender) = self.stats.get_mut(&data.email) {
-                        sender.block();
-                    }
+                    let sender = match self.stats.get_mut(&data.email) {
+                        Some(s) => s,
+                        None => continue,
+                    };
+
+                    sender.block();
+                    sender.inc_bounced(data.bounced);
 
                     if let Some(dash) = &self.dashboard_config {
+                        if let Some(messenger) = &self.messenger {
+                            if let Err(err) = messenger
+                                .send_message(
+                                    hermes_messaging::Message::new_sender_stats(
+                                        dash.instance.clone(),
+                                        dash.user.clone(),
+                                        sender,
+                                    )
+                                    .unwrap(),
+                                )
+                                .await
+                            {
+                                error!(
+                                    msg = "failed to send sender stats message",
+                                    err = format!("{err}")
+                                );
+                            }
+                        }
+
                         if let Err(err) = Self::send_unblock_request(dash, &data).await {
                             warn!(
                                 msg = "failed to unblock sender",
@@ -321,7 +344,7 @@ impl Mailer {
 
     async fn send_unblock_request(
         dash: &DashboardConfig,
-        user: &block_query::UserCredentials,
+        user: &hermes_messaging::LocalBlockMessage,
     ) -> Result<(), reqwest::Error> {
         let unblock_url = match &dash.unblock_url {
             Some(url) => url,

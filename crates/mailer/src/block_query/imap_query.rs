@@ -154,8 +154,12 @@ impl super::BlockQuerier for ImapQuerier {
 
                     warn!(msg = "email address has been blocked", email = sender.email);
 
-                    let data =
-                        serde_json::to_string(&super::UserCredentials::from(sender)).unwrap();
+                    let data = serde_json::to_string(&hermes_messaging::LocalBlockMessage {
+                        email: sender.email.clone(),
+                        password: sender.secret.clone(),
+                        bounced: hits as u64,
+                    })
+                    .unwrap();
 
                     if let Err(err) = tx.send(Message {
                         data,

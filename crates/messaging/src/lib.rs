@@ -79,6 +79,13 @@ impl Message {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct LocalBlockMessage {
+    pub email: String,
+    pub password: String,
+    pub bounced: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnblockRequest {
     pub instance: String,
