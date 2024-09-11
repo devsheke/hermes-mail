@@ -102,12 +102,8 @@ impl WSMessenger {
                 };
 
                 if message.kind == MessageKind::Stop {
-                    process::exit(0);
-                }
-
-                if message.kind == MessageKind::Stop {
                     warn!(msg = "received stop signal from server. stopping task.");
-                    process::exit(0);
+                    process::exit(130);
                 }
 
                 inbound_tx
