@@ -149,7 +149,7 @@ impl ConvertCommand {
             map = map.variables(pos)
         }
 
-        reader.convert_receivers(map, self.output)
+        Ok(reader.convert_receivers(map, self.output)?)
     }
 
     fn sender_prompt(self, reader: Reader) -> Result<(), super::StdError> {
@@ -211,7 +211,7 @@ impl ConvertCommand {
             map = map.auth(mech)
         }
 
-        reader.convert_senders(map, self.output)
+        Ok(reader.convert_senders(map, self.output)?)
     }
 
     pub(crate) fn convert(self) -> Result<(), super::StdError> {

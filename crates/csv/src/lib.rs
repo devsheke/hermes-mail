@@ -2,10 +2,45 @@ use hermes_mailer::data::{Receiver, Sender, TemplateVariables};
 use lettre::{message::Mailboxes, transport::smtp::authentication::Mechanism};
 use serde::Serialize;
 use std::{
-    collections::HashMap, env, error::Error, fmt::Display, fs::File, io::Read,
-    os::unix::fs::FileExt, path::PathBuf, str::FromStr,
+    collections::HashMap,
+    env,
+    error::Error as StdError,
+    fmt::Display,
+    fs::File,
+    io::{self, Read},
+    os::unix::fs::FileExt,
+    path::PathBuf,
+    str::FromStr,
 };
 use tracing::debug;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("{file}: {err}")]
+    Csv { file: String, err: csv::Error },
+    #[error("{file}: {err}")]
+    Io { file: String, err: io::Error },
+    #[error("failed to map sender file: {0}")]
+    SenderConversion(Box<dyn StdError>),
+    #[error("failed to map receiver file: {0}")]
+    ReceiverConversion(Box<dyn StdError>),
+}
+
+impl Error {
+    fn new_csv(f: &PathBuf, err: csv::Error) -> Self {
+        Self::Csv {
+            file: f.to_str().unwrap_or("".into()).into(),
+            err,
+        }
+    }
+
+    fn new_io(f: &PathBuf, err: io::Error) -> Self {
+        Self::Io {
+            file: f.to_str().unwrap_or("".into()).into(),
+            err,
+        }
+    }
+}
 
 enum DataType {
     Senders,
@@ -145,11 +180,16 @@ pub struct Reader {
 }
 
 impl Reader {
-    pub fn new(file: &PathBuf) -> Result<Self, csv::Error> {
+    pub fn new(file: &PathBuf) -> Result<Self, Error> {
         debug!(msg = "reading file", file = format!("{file:?}"));
-        let mut rdr = csv::Reader::from_path(file)?;
+        let mut rdr = match csv::Reader::from_path(file) {
+            Ok(r) => r,
+            Err(err) => return Err(Error::new_csv(file, err)),
+        };
+
         let headers = rdr
-            .headers()?
+            .headers()
+            .map_err(|err| Error::new_csv(file, err))?
             .clone()
             .iter()
             .map(|s| s.to_string())
@@ -162,12 +202,20 @@ impl Reader {
         self.headers.iter().position(|f| f == search)
     }
 
-    pub fn new_sanitized(file: &PathBuf) -> Result<Self, csv::Error> {
+    pub fn new_sanitized(file: &PathBuf) -> Result<Self, Error> {
         debug!(msg = "sanitizing file", file = format!("{file:?}"));
-        let mut f = File::open(file)?;
+        let mut f = match File::open(file) {
+            Ok(f) => f,
+            Err(err) => return Err(Error::new_io(file, err)),
+        };
         let mut contents = Vec::<u8>::new();
 
-        f.read_to_end(&mut contents)?;
+        if let Err(err) = f.read_to_end(&mut contents) {
+            return Err(Error::Io {
+                file: file.to_str().unwrap_or("".into()).into(),
+                err,
+            });
+        };
 
         let contents: Vec<u8> = contents
             .iter()
@@ -178,8 +226,10 @@ impl Reader {
         File::options()
             .write(true)
             .truncate(true)
-            .open(file)?
-            .write_all_at(&contents, 0)?;
+            .open(file)
+            .map_err(|err| Error::new_io(file, err))?
+            .write_all_at(&contents, 0)
+            .map_err(|err| Error::new_io(file, err))?;
 
         Self::new(file)
     }
@@ -189,7 +239,7 @@ impl Reader {
         source: &str,
         target: &str,
         receiver: &mut Receiver,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), Box<dyn StdError>> {
         debug!(
             msg = "got receiver column",
             field = field,
@@ -245,7 +295,7 @@ impl Reader {
         source: &str,
         target: &str,
         sender: &mut Sender,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), Box<dyn StdError>> {
         debug!(msg = "got sender column", source = source, target = target);
         match target {
             "email" => sender.email = source.to_string(),
@@ -262,7 +312,7 @@ impl Reader {
         file: Option<PathBuf>,
         data: Vec<S>,
         _type: DataType,
-    ) -> Result<(), Box<dyn Error>>
+    ) -> Result<(), Box<dyn StdError>>
     where
         S: Serialize,
     {
@@ -289,20 +339,19 @@ impl Reader {
         &mut self,
         receiver_map: ReceiverHeaderMap,
         outfile: Option<PathBuf>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), Error> {
         let mut receivers = Vec::new();
 
         for record in self.rdr.records() {
-            let record = record?;
+            let record = record.map_err(|err| Error::ReceiverConversion(Box::new(err)))?;
+
             let mut receiver = Receiver::default();
             for (i, source) in record.into_iter().enumerate() {
                 match receiver_map.data.get(&i) {
-                    Some(target) => Reader::map_receiver_fields(
-                        &self.headers[i],
-                        source,
-                        target,
-                        &mut receiver,
-                    )?,
+                    Some(target) => {
+                        Reader::map_receiver_fields(&self.headers[i], source, target, &mut receiver)
+                            .map_err(Error::ReceiverConversion)?
+                    }
                     None => continue,
                 };
             }
@@ -323,21 +372,23 @@ impl Reader {
         }
 
         Reader::save_output(outfile, receivers, DataType::Receivers)
+            .map_err(Error::ReceiverConversion)
     }
 
     pub fn convert_senders(
         mut self,
         sender_map: SenderHeaderMap,
         outfile: Option<PathBuf>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), Error> {
         let mut senders = Vec::new();
 
         for record in self.rdr.records() {
-            let record = record?;
+            let record = record.map_err(|err| Error::SenderConversion(Box::new(err)))?;
             let mut sender = Sender::default();
             for (i, source) in record.into_iter().enumerate() {
                 if let Some(target) = sender_map.data.get(&i) {
-                    Reader::map_sender_fields(source, target, &mut sender)?
+                    Reader::map_sender_fields(source, target, &mut sender)
+                        .map_err(Error::SenderConversion)?;
                 }
 
                 if let Some(host) = &sender_map.host {
@@ -352,5 +403,6 @@ impl Reader {
         }
 
         Reader::save_output(outfile, senders, DataType::Senders)
+            .map_err(|err| Error::SenderConversion(err))
     }
 }
