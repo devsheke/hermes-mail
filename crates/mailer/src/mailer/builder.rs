@@ -139,10 +139,21 @@ impl Builder {
                     return Err(BuildError::MissingTemplate(r.email));
                 }
 
-                if let Some(file) = r.formatted.as_ref() {
-                    let converted_file = r.formatted.insert(convert_to_html(file.clone())?);
+                if let Some(file) = &mut r.formatted {
+                    if let Some(content_dir) = &self.content {
+                        *file = content_dir.join(&file);
+                    }
+
+                    let converted_file = convert_to_html(file.clone())?;
+                    *file = converted_file.clone();
                     if r.plain.is_none() {
-                        r.plain = Some(html_to_plain(converted_file.clone())?);
+                        r.plain = Some(html_to_plain(converted_file)?);
+                    }
+                }
+
+                if let Some(file) = &mut r.plain {
+                    if let Some(content_dir) = &self.content {
+                        *file = content_dir.join(&file);
                     }
                 }
 
