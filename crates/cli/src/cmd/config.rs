@@ -98,7 +98,6 @@ impl CSVMap {
         file: &PathBuf,
         sanitize: bool,
     ) -> Result<PathBuf, StdError> {
-        println!("wagoo");
         let mut reader = if sanitize {
             Reader::new_sanitized(file)?
         } else {
