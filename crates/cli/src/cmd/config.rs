@@ -7,7 +7,7 @@ use hermes_mailer::{
 use lettre::transport::smtp::authentication::Mechanism;
 use serde::Deserialize;
 use std::{fs, path::PathBuf};
-use thiserror::Error;
+use thiserror::Error as ThisError;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase", tag = "type")]
@@ -41,10 +41,10 @@ struct CSVMap {
     sanitize: bool,
 }
 
-#[derive(Error, Debug)]
-enum CSVError {
+#[derive(ThisError, Debug)]
+enum Error {
     #[error("Could not find matching field: {0}")]
-    MissingFieldError(String),
+    MissingField(String),
 }
 
 impl CSVMap {
@@ -64,7 +64,7 @@ impl CSVMap {
             .email(
                 reader
                     .find_header(&fields.email)
-                    .ok_or(CSVError::MissingFieldError(fields.email.clone()))?,
+                    .ok_or(Error::MissingField(fields.email.clone()))?,
             )
             .secret(reader.find_header(&fields.password).unwrap());
 
@@ -73,7 +73,7 @@ impl CSVMap {
             ValueKind::Row { value } => map.auth(
                 reader
                     .find_header(value)
-                    .ok_or(CSVError::MissingFieldError(value.to_string()))?,
+                    .ok_or(Error::MissingField(value.to_string()))?,
             ),
         };
 
@@ -82,7 +82,7 @@ impl CSVMap {
             ValueKind::Row { value } => map.host(
                 reader
                     .find_header(value)
-                    .ok_or(CSVError::MissingFieldError(value.to_string()))?,
+                    .ok_or(Error::MissingField(value.to_string()))?,
             ),
         };
 
@@ -108,12 +108,12 @@ impl CSVMap {
             .email(
                 reader
                     .find_header(&fields.email)
-                    .ok_or(CSVError::MissingFieldError(fields.email.clone()))?,
+                    .ok_or(Error::MissingField(fields.email.clone()))?,
             )
             .sender(
                 reader
                     .find_header(&fields.sender)
-                    .ok_or(CSVError::MissingFieldError(fields.sender.clone()))?,
+                    .ok_or(Error::MissingField(fields.sender.clone()))?,
             )
             .variables(
                 fields
@@ -128,7 +128,7 @@ impl CSVMap {
             ValueKind::Row { value } => map.subject(
                 reader
                     .find_header(value)
-                    .ok_or(CSVError::MissingFieldError(value.to_string()))?,
+                    .ok_or(Error::MissingField(value.to_string()))?,
             ),
         };
 
@@ -137,7 +137,7 @@ impl CSVMap {
             ValueKind::Row { value } => map.plain(
                 reader
                     .find_header(value)
-                    .ok_or(CSVError::MissingFieldError(value.to_string()))?,
+                    .ok_or(Error::MissingField(value.to_string()))?,
             ),
         };
 
@@ -146,7 +146,7 @@ impl CSVMap {
             ValueKind::Row { value } => map.formatted(
                 reader
                     .find_header(value)
-                    .ok_or(CSVError::MissingFieldError(value.to_string()))?,
+                    .ok_or(Error::MissingField(value.to_string()))?,
             ),
         };
 
