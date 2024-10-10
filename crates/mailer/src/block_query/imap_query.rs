@@ -22,7 +22,6 @@ pub enum Error {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImapQuerier {
     domain: String,
-    port: u16,
     username: String,
     password: String,
     subject_queries: Vec<String>,
@@ -35,7 +34,7 @@ impl ImapQuerier {
             .build()
             .map_err(Error::Tls)?;
 
-        let client = imap::connect((self.domain.as_str(), self.port), &self.domain, &tls)
+        let client = imap::connect((self.domain.as_str(), 993), &self.domain, &tls)
             .map_err(Error::Connection)?;
 
         client
