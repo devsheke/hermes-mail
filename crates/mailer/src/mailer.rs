@@ -394,7 +394,7 @@ impl Mailer {
         self.messenger = Some(Messenger::WS(ws));
 
         if let Some(b) = dash.block_querier.clone() {
-            let _ = b.query_block(self.senders.clone(), tx);
+            let _ = b.query_block(self.senders.iter().map(|s| Sender::from(s)).collect(), tx);
         }
 
         Ok(())

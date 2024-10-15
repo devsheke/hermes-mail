@@ -106,6 +106,18 @@ pub struct Sender {
     pub receivers: Receivers,
 }
 
+impl From<&Arc<Sender>> for Sender {
+    fn from(d: &Arc<Sender>) -> Self {
+        Self {
+            email: d.email.clone(),
+            secret: d.secret.clone(),
+            auth: d.auth.clone(),
+            host: d.host.clone(),
+            receivers: vec![],
+        }
+    }
+}
+
 impl Default for Sender {
     fn default() -> Self {
         Self {
