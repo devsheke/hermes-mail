@@ -1,4 +1,4 @@
-use crate::data::Senders;
+use crate::data::{Sender, Senders};
 use chrono::{Duration, Local};
 use hermes_messaging::Message;
 use imap::Session;
@@ -46,7 +46,7 @@ impl ImapQuerier {
 impl super::BlockQuerier for ImapQuerier {
     fn query_block(
         self,
-        senders: Senders,
+        senders: Vec<Sender>,
         tx: crossbeam_channel::Sender<Message>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut session: Option<ImapSession> = None;
