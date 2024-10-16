@@ -30,8 +30,8 @@ struct ReceiverFields {
     sender: String,
     variables: Vec<String>,
     subject: ValueKind<String>,
-    plain: ValueKind<PathBuf>,
-    formatted: ValueKind<PathBuf>,
+    plain: Option<ValueKind<PathBuf>>,
+    formatted: Option<ValueKind<PathBuf>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +45,8 @@ struct CSVMap {
 enum Error {
     #[error("Could not find matching field: {0}")]
     MissingField(String),
+    #[error("Either plaintext or formatted email body files is required but none were found.")]
+    MissingPitchFiles,
 }
 
 impl CSVMap {
@@ -132,23 +134,31 @@ impl CSVMap {
             ),
         };
 
-        map = match &fields.plain {
-            ValueKind::Global { value } => map.global_plain(value.clone()),
-            ValueKind::Row { value } => map.plain(
-                reader
-                    .find_header(value)
-                    .ok_or(Error::MissingField(value.to_string()))?,
-            ),
-        };
+        if fields.plain.is_none() && fields.formatted.is_none() {
+            return Err(Box::new(Error::MissingPitchFiles));
+        }
 
-        map = match &fields.formatted {
-            ValueKind::Global { value } => map.global_formatted(value.clone()),
-            ValueKind::Row { value } => map.formatted(
-                reader
-                    .find_header(value)
-                    .ok_or(Error::MissingField(value.to_string()))?,
-            ),
-        };
+        if let Some(plain) = &fields.plain {
+            map = match plain {
+                ValueKind::Global { value } => map.global_plain(value.clone()),
+                ValueKind::Row { value } => map.plain(
+                    reader
+                        .find_header(value)
+                        .ok_or(Error::MissingField(value.to_string()))?,
+                ),
+            };
+        }
+
+        if let Some(formatted) = &fields.formatted {
+            map = match formatted {
+                ValueKind::Global { value } => map.global_formatted(value.clone()),
+                ValueKind::Row { value } => map.formatted(
+                    reader
+                        .find_header(value)
+                        .ok_or(Error::MissingField(value.to_string()))?,
+                ),
+            };
+        }
 
         let mut file = file.to_owned();
         file.set_file_name("convert_receivers.csv");
