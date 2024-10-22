@@ -274,7 +274,6 @@ impl Mailer {
     }
 
     async fn read_messages(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        debug!(msg = "reading inbound messages");
         let messenger = match &self.messenger {
             Some(m) => m,
             None => return Ok(()),
@@ -284,14 +283,41 @@ impl Mailer {
 
         for message in messages {
             match message.kind {
-                hermes_messaging::MessageKind::Block => {
+                hermes_messaging::MessageKind::SenderResume => {
+                    if let Some(sender) = self.stats.get_mut(&message.data) {
+                        sender.unblock();
+                    }
+                }
+                hermes_messaging::MessageKind::SenderPause => {
                     if let Some(sender) = self.stats.get_mut(&message.data) {
                         sender.block();
                     }
                 }
                 hermes_messaging::MessageKind::Unblock => {
-                    if let Some(sender) = self.stats.get_mut(&message.data) {
-                        sender.unblock();
+                    let data: hermes_messaging::UnblockResult =
+                        match serde_json::from_str(&message.data) {
+                            Ok(d) => d,
+                            Err(err) => {
+                                error!(
+                                    msg = "failed to decode unblock message",
+                                    err = format!("{err}")
+                                );
+                                continue;
+                            }
+                        };
+
+                    if !data.unblock {
+                        continue;
+                    }
+
+                    let sender = match self.stats.get_mut(&data.email) {
+                        Some(s) => s,
+                        None => continue,
+                    };
+
+                    sender.unblock();
+                    if data.timeout > 0 {
+                        sender.set_timeout(Duration::seconds(data.timeout));
                     }
                 }
                 hermes_messaging::MessageKind::LocalBlock => {
@@ -306,33 +332,50 @@ impl Mailer {
                     sender.block();
                     sender.inc_bounced(data.bounced);
 
-                    if let Some(dash) = &self.dashboard_config {
-                        if let Some(messenger) = &self.messenger {
-                            if let Err(err) = messenger
-                                .send_message(
-                                    hermes_messaging::Message::new_sender_stats(
-                                        dash.instance.clone(),
-                                        dash.user.clone(),
-                                        sender,
-                                    )
-                                    .unwrap(),
+                    let dash = match &self.dashboard_config {
+                        Some(d) => d,
+                        None => continue,
+                    };
+
+                    if let Some(messenger) = &self.messenger {
+                        messenger
+                            .send_message(hermes_messaging::Message::new_block(
+                                dash.instance.clone(),
+                                dash.user.clone(),
+                                data.email.clone(),
+                            ))
+                            .await
+                            .unwrap_or_else(|err| {
+                                error!(
+                                    msg = "failed to send sender block message",
+                                    err = format!("{err}")
+                                );
+                            });
+
+                        messenger
+                            .send_message(
+                                hermes_messaging::Message::new_sender_stats(
+                                    dash.instance.clone(),
+                                    dash.user.clone(),
+                                    sender,
                                 )
-                                .await
-                            {
+                                .unwrap(),
+                            )
+                            .await
+                            .unwrap_or_else(|err| {
                                 error!(
                                     msg = "failed to send sender stats message",
                                     err = format!("{err}")
                                 );
-                            }
-                        }
+                            });
+                    }
 
-                        if let Err(err) = Self::send_unblock_request(dash, &data).await {
-                            warn!(
-                                msg = "failed to unblock sender",
-                                sender = data.email,
-                                err = format!("{err}")
-                            );
-                        }
+                    if let Err(err) = Self::send_unblock_request(dash, &data).await {
+                        warn!(
+                            msg = "failed to unblock sender",
+                            sender = data.email,
+                            err = format!("{err}")
+                        );
                     }
                 }
                 _ => continue,
@@ -360,7 +403,7 @@ impl Mailer {
 
         let req = reqwest::Client::new()
             .post(unblock_url)
-            .bearer_auth("")
+            .bearer_auth(&dash.api_key)
             .json(&body);
 
         let _ = req.send().await?;
@@ -649,4 +692,37 @@ fn time_until_day(days: i64) -> Duration {
     dur -= Duration::try_seconds(now.second() as i64).unwrap();
 
     dur
+}
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+
+    use crate::data::DashboardConfig;
+    use crate::mailer::Mailer;
+
+    #[tokio::test]
+    async fn test_send_unblock_request() -> Result<(), reqwest::Error> {
+        let email = env::var("EMAIL").expect("failed to fetch 'EMAIL' from env");
+        let password = env::var("PASSWORD").expect("failed to fetch 'PASSWORD' from env");
+
+        let dash = DashboardConfig {
+            domain: "".into(),
+            instance: env::var("INSTANCE").expect("failed to fetch 'INSTANCE' from env"),
+            api_key: env::var("API_KEY").expect("failed to fetch 'API_KEY' from env"),
+            user: env::var("USER").expect("failed to fetch 'USER' from env"),
+            unblock_url: Some(env::var("URL").expect("failed to fetch 'URL' env")),
+            block_querier: None,
+        };
+
+        let msg = hermes_messaging::LocalBlockMessage {
+            bounced: 0,
+            email,
+            password,
+        };
+
+        Mailer::send_unblock_request(&dash, &msg).await?;
+
+        return Ok(());
+    }
 }
