@@ -1,4 +1,4 @@
-use crate::data::{Sender, Senders};
+use crate::data::Sender;
 use chrono::{Duration, Local};
 use hermes_messaging::Message;
 use imap::Session;
@@ -105,13 +105,12 @@ impl super::BlockQuerier for ImapQuerier {
                     continue;
                 }
 
-                let messages = match _session.fetch(
-                    res.iter()
-                        .map(|n| format!("{n}"))
-                        .collect::<Vec<String>>()
-                        .join(","),
-                    "RFC822",
-                ) {
+                let message_ids = res
+                    .iter()
+                    .map(|n| format!("{n}"))
+                    .collect::<Vec<String>>()
+                    .join(",");
+                let messages = match _session.fetch(message_ids.clone(), "RFC822") {
                     Ok(m) => m,
                     Err(err) => {
                         error!(msg = "email fetch", err = format!("{err}"));
@@ -119,6 +118,7 @@ impl super::BlockQuerier for ImapQuerier {
                     }
                 };
 
+                let mut hits = 0;
                 for message in messages.iter() {
                     let body = match message.body() {
                         Some(b) => std::str::from_utf8(b),
@@ -141,34 +141,50 @@ impl super::BlockQuerier for ImapQuerier {
                         }
                     };
 
-                    let hits = self
+                    hits = self
                         .body_queries
                         .iter()
                         .filter(|q| body.contains(*q))
                         .count();
 
-                    if hits == 0 {
-                        continue;
+                    if hits > 0 {
+                        break;
                     }
+                }
 
-                    warn!(msg = "email address has been blocked", email = sender.email);
+                if hits <= 0 {
+                    continue;
+                }
 
-                    let data = serde_json::to_string(&hermes_messaging::LocalBlockMessage {
-                        email: sender.email.clone(),
-                        password: sender.secret.clone(),
-                        bounced: hits as u64,
-                    })
-                    .unwrap();
+                warn!(msg = "email address has been blocked", email = sender.email);
 
-                    if let Err(err) = tx.send(Message {
-                        data,
-                        from: "".into(),
-                        from_type: hermes_messaging::SenderType::Instance,
-                        kind: hermes_messaging::MessageKind::LocalBlock,
-                        to: "".into(),
-                    }) {
-                        error!(msg = "local block send err", err = format!("{err}"))
-                    }
+                let data = serde_json::to_string(&hermes_messaging::LocalBlockMessage {
+                    email: sender.email.clone(),
+                    password: sender.secret.clone(),
+                    bounced: hits as u64,
+                })
+                .unwrap();
+
+                if let Err(err) = tx.send(Message {
+                    data,
+                    from: "".into(),
+                    from_type: hermes_messaging::SenderType::Instance,
+                    kind: hermes_messaging::MessageKind::LocalBlock,
+                    to: "".into(),
+                }) {
+                    error!(msg = "local block send err", err = format!("{err}"))
+                }
+
+                if let Err(err) = _session.store(message_ids, "+FLAGS (\\Deleted)") {
+                    error!(
+                        msg = "failed to flag emails for deletion",
+                        err = format!("{err}")
+                    );
+                    continue;
+                }
+
+                if let Err(err) = _session.expunge() {
+                    error!(msg = "failed to expunge emails", err = format!("{err}"))
                 }
             }
         });

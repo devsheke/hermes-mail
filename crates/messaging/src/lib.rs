@@ -19,6 +19,8 @@ pub enum MessageKind {
     Stop,
     TaskStats,
     Unblock,
+    SenderPause,
+    SenderResume,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -97,9 +99,9 @@ pub struct UnblockRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub struct UnblockResult {
-    email: String,
-    unblock: bool,
-    timeout: i64,
+    pub email: String,
+    pub unblock: bool,
+    pub timeout: i64,
 }
 
 pub trait MessengerDispatch {
@@ -127,6 +129,9 @@ impl MessengerDispatch for Messenger {
     }
 
     async fn get_new_messages(&self) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
-        Ok(vec![])
+        match self {
+            Messenger::WS(ws) => ws.get_new_messages().await,
+            _ => todo!("MessengerDispatch has not been implemented yet"),
+        }
     }
 }

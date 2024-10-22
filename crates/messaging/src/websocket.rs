@@ -79,7 +79,7 @@ impl WSMessenger {
                         }
                         TungsteniteMessage::Close(_) => {
                             warn!(msg = "socket connection closed; exiting program.");
-                            process::exit(0);
+                            process::exit(1);
                         }
                         _ => continue,
                     },
@@ -106,9 +106,9 @@ impl WSMessenger {
                     process::exit(130);
                 }
 
-                inbound_tx
-                    .send(message)
-                    .unwrap_or_else(|e| error!(msg = "", err = format!("{e}")));
+                inbound_tx.send(message).unwrap_or_else(|e| {
+                    error!(msg = "failed to send message inbound", err = format!("{e}"))
+                });
             }
         });
 
