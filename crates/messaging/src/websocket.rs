@@ -67,7 +67,16 @@ impl WSMessenger {
 
                 let data = match raw_message {
                     Ok(d) => match d {
-                        TungsteniteMessage::Text(t) => t,
+                        TungsteniteMessage::Text(t) => {
+                            WSMessenger::pong(_tx.clone()).unwrap_or_else(|err| {
+                                error!(
+                                    msg = "failed to send pong to server",
+                                    err = format!("{err}")
+                                );
+                            });
+
+                            t
+                        }
                         TungsteniteMessage::Ping(_) | TungsteniteMessage::Pong(_) => {
                             if let Err(err) = WSMessenger::pong(_tx.clone()) {
                                 error!(
@@ -84,8 +93,19 @@ impl WSMessenger {
                         _ => continue,
                     },
                     Err(err) => {
-                        error!(msg = "socket read err", err = format!("{err}"));
-                        continue;
+                        match err {
+                            tokio_tungstenite::tungstenite::Error::ConnectionClosed
+                            | tokio_tungstenite::tungstenite::Error::AlreadyClosed => {
+                                eprintln!(
+                                    "Websocket connection closed by server. Exiting program."
+                                );
+                                process::exit(1);
+                            }
+                            _ => {
+                                error!(msg = "socket read err", err = format!("{err}"));
+                                continue;
+                            }
+                        };
                     }
                 };
 
