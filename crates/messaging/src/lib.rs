@@ -104,15 +104,27 @@ pub struct UnblockResult {
     pub timeout: i64,
 }
 
-pub trait MessengerDispatch {
-    fn send_message(
-        &self,
-        msg: Message,
-    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
+pub trait MessengerDispatch
+where
+    Self: Sized,
+{
+    fn connect(
+        &mut self,
+    ) -> impl Future<Output = Result<crossbeam_channel::Sender<Message>, Box<dyn std::error::Error>>>
+           + Send;
 
     fn get_new_messages(
         &self,
     ) -> impl Future<Output = Result<Vec<Message>, Box<dyn std::error::Error>>> + Send;
+
+    fn is_closed(&self) -> impl Future<Output = Result<bool, Box<dyn std::error::Error>>> + Send;
+
+    fn reconnect(&self) -> impl Future<Output = Result<Self, Box<dyn std::error::Error>>> + Send;
+
+    fn send_message(
+        &self,
+        msg: Message,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
 }
 
 pub enum Messenger {
@@ -121,17 +133,39 @@ pub enum Messenger {
 }
 
 impl MessengerDispatch for Messenger {
+    async fn connect(
+        &mut self,
+    ) -> Result<crossbeam_channel::Sender<Message>, Box<dyn std::error::Error>> {
+        match self {
+            Messenger::WS(ws) => ws.connect().await,
+            _ => todo!(),
+        }
+    }
+    async fn get_new_messages(&self) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
+        match self {
+            Messenger::WS(ws) => ws.get_new_messages().await,
+            _ => todo!(),
+        }
+    }
+
+    async fn is_closed(&self) -> Result<bool, Box<dyn std::error::Error>> {
+        match self {
+            Messenger::WS(ws) => ws.is_closed().await,
+            _ => todo!(),
+        }
+    }
+
+    async fn reconnect(&self) -> Result<Self, Box<dyn std::error::Error>> {
+        match self {
+            Messenger::WS(ws) => Ok(Messenger::WS(ws.reconnect().await?)),
+            _ => todo!(),
+        }
+    }
+
     async fn send_message(&self, msg: Message) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             Messenger::WS(ws) => ws.send_message(msg).await,
             Messenger::Kafka(k) => k.send_message(msg).await,
-        }
-    }
-
-    async fn get_new_messages(&self) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
-        match self {
-            Messenger::WS(ws) => ws.get_new_messages().await,
-            _ => todo!("MessengerDispatch has not been implemented yet"),
         }
     }
 }
