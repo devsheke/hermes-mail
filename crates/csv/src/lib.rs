@@ -9,7 +9,7 @@ use std::{
     fs::File,
     io::{self, Read},
     os::unix::fs::FileExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
 };
 use tracing::debug;
@@ -27,16 +27,16 @@ pub enum Error {
 }
 
 impl Error {
-    fn new_csv(f: &PathBuf, err: csv::Error) -> Self {
+    fn new_csv(f: &Path, err: csv::Error) -> Self {
         Self::Csv {
-            file: f.to_str().unwrap_or("".into()).into(),
+            file: f.to_str().unwrap_or("").into(),
             err,
         }
     }
 
-    fn new_io(f: &PathBuf, err: io::Error) -> Self {
+    fn new_io(f: &Path, err: io::Error) -> Self {
         Self::Io {
-            file: f.to_str().unwrap_or("".into()).into(),
+            file: f.to_str().unwrap_or("").into(),
             err,
         }
     }
@@ -212,7 +212,7 @@ impl Reader {
 
         if let Err(err) = f.read_to_end(&mut contents) {
             return Err(Error::Io {
-                file: file.to_str().unwrap_or("".into()).into(),
+                file: file.to_str().unwrap_or("").into(),
                 err,
             });
         };
@@ -402,7 +402,6 @@ impl Reader {
             senders.push(sender);
         }
 
-        Reader::save_output(outfile, senders, DataType::Senders)
-            .map_err(|err| Error::SenderConversion(err))
+        Reader::save_output(outfile, senders, DataType::Senders).map_err(Error::SenderConversion)
     }
 }

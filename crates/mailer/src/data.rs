@@ -111,7 +111,7 @@ impl From<&Arc<Sender>> for Sender {
         Self {
             email: d.email.clone(),
             secret: d.secret.clone(),
-            auth: d.auth.clone(),
+            auth: d.auth,
             host: d.host.clone(),
             receivers: vec![],
         }
