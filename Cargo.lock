@@ -688,6 +688,7 @@ dependencies = [
  "console",
  "dialoguer",
  "hermes-csv",
+ "hermes-logger",
  "hermes-mailer",
  "indicatif",
  "lettre",
@@ -713,6 +714,17 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "hermes-logger"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "tracing",
+ "tracing-appender",
+ "tracing-indicatif",
+ "tracing-subscriber",
 ]
 
 [[package]]
