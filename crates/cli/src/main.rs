@@ -1,9 +1,9 @@
 use clap::Parser;
 use console::style;
+use hermes_logger;
 use std::process;
 
 mod cmd;
-mod logging;
 
 type StdError = Box<dyn std::error::Error>;
 
@@ -11,8 +11,9 @@ type StdError = Box<dyn std::error::Error>;
 async fn main() {
     let cmd = cmd::Cmd::parse();
 
-    let _guard = logging::init_logger(cmd.pretty.unwrap_or(false), cmd.log_level.unwrap_or(1))
-        .unwrap_or_else(|e| print_error(e));
+    let _guard =
+        hermes_logger::init_logger(cmd.pretty.unwrap_or(false), cmd.log_level.unwrap_or(1))
+            .unwrap_or_else(|e| print_error(e));
 
     let res = match cmd.command {
         cmd::Commands::Send(args) => args.send().await,
