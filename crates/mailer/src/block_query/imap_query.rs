@@ -119,7 +119,7 @@ impl super::BlockQuerier for ImapQuerier {
                 };
 
                 let mut hits = 0;
-                for message in messages.iter() {
+                'message_loop: for message in messages.iter() {
                     let body = match message.body() {
                         Some(b) => std::str::from_utf8(b),
                         None => {
@@ -128,15 +128,10 @@ impl super::BlockQuerier for ImapQuerier {
                         }
                     };
 
-                    if let Err(err) = body {
-                        error!(msg = "email body utf8 err", err = format!("{err}"));
-                        continue;
-                    }
-
                     let body = match body {
                         Ok(s) => s,
                         Err(err) => {
-                            error!(msg = "", err = format!("{err}"));
+                            error!(msg = "email body utf8 err", err = format!("{err}"));
                             continue;
                         }
                     };
@@ -148,12 +143,8 @@ impl super::BlockQuerier for ImapQuerier {
                         .count();
 
                     if hits > 0 {
-                        break;
+                        break 'message_loop;
                     }
-                }
-
-                if hits <= 0 {
-                    continue;
                 }
 
                 warn!(msg = "email address has been blocked", email = sender.email);
