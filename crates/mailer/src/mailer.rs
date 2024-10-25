@@ -273,6 +273,35 @@ impl Mailer {
         }
     }
 
+    async fn recover_messenger(&mut self) {
+        let messenger = match &mut self.messenger {
+            Some(m) => m,
+            None => return,
+        };
+
+        match messenger.is_closed().await {
+            Ok(closed) => {
+                if closed {
+                    match messenger.reconnect().await {
+                        Ok(m) => {
+                            let _ = self.messenger.insert(m);
+                        }
+                        Err(err) => error!(
+                            msg = "failed to reconnect to messenger",
+                            err = format!("{err}")
+                        ),
+                    }
+                }
+            }
+            Err(err) => {
+                error!(
+                    msg = "failed to fetch messenger closed status",
+                    err = format!("{err}")
+                )
+            }
+        };
+    }
+
     async fn read_messages(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let messenger = match &self.messenger {
             Some(m) => m,
@@ -426,18 +455,18 @@ impl Mailer {
         let ws_url = dash.domain.replace("http", "ws");
         let instance = dash.instance.clone();
 
-        let mut ws = WSMessenger::new();
-
         let url = format!("{}/ws/instances/{}", ws_url, instance);
+        let mut ws = WSMessenger::new(url.clone());
+
         let tx = ws
-            .connect(&url)
+            .connect()
             .await
-            .map_err(|err| Error::MessengerConnection(Box::new(err), url))?;
+            .map_err(|err| Error::MessengerConnection(err, url))?;
 
         self.messenger = Some(Messenger::WS(ws));
 
         if let Some(b) = dash.block_querier.clone() {
-            let _ = b.query_block(self.senders.iter().map(|s| Sender::from(s)).collect(), tx);
+            let _ = b.query_block(self.senders.iter().map(Sender::from).collect(), tx);
         }
 
         Ok(())
@@ -536,6 +565,8 @@ impl Mailer {
                     .set_timeout(self.rate);
 
                 cursor.inc();
+
+                self.recover_messenger().await;
             }
 
             let _sent = self.collect_tasks(tasks).await;
