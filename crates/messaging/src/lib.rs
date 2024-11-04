@@ -1,15 +1,16 @@
+use amqp::Amqp;
 use futures::Future;
-use kafka::Kafka;
 use serde::{self, Deserialize, Serialize};
 use websocket::WSMessenger;
 
-pub mod kafka;
+pub mod amqp;
 pub mod stats;
 pub mod websocket;
 
 #[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MessageKind {
+    MessengerDisconnect,
     Block,
     #[default]
     Empty,
@@ -43,6 +44,12 @@ pub struct Message {
 }
 
 impl Message {
+    pub fn new_messenger_disconnect() -> Self {
+        let mut msg = Message::default();
+        msg.kind = MessageKind::MessengerDisconnect;
+        msg
+    }
+
     pub fn new_block(instance: String, user: String, email: String) -> Self {
         Message {
             data: email,
@@ -91,9 +98,10 @@ pub struct LocalBlockMessage {
 #[serde(rename_all = "camelCase")]
 pub struct UnblockRequest {
     pub instance: String,
+    pub user: String,
     pub email: String,
     pub password: String,
-    pub should_unblock: bool,
+    pub provider: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -125,11 +133,18 @@ where
         &self,
         msg: Message,
     ) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
+
+    fn send_unblock_request(
+        &self,
+        msg: UnblockRequest,
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase", tag = "type", content = "value")]
 pub enum Messenger {
-    WS(WSMessenger),
-    Kafka(Kafka),
+    Websocket(WSMessenger),
+    Amqp(Amqp),
 }
 
 impl MessengerDispatch for Messenger {
@@ -137,35 +152,73 @@ impl MessengerDispatch for Messenger {
         &mut self,
     ) -> Result<crossbeam_channel::Sender<Message>, Box<dyn std::error::Error>> {
         match self {
-            Messenger::WS(ws) => ws.connect().await,
-            _ => todo!(),
+            Messenger::Amqp(a) => a.connect().await,
+            Messenger::Websocket(ws) => ws.connect().await,
         }
     }
     async fn get_new_messages(&self) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
         match self {
-            Messenger::WS(ws) => ws.get_new_messages().await,
-            _ => todo!(),
+            Messenger::Amqp(a) => a.get_new_messages().await,
+            Messenger::Websocket(ws) => ws.get_new_messages().await,
         }
     }
 
     async fn is_closed(&self) -> Result<bool, Box<dyn std::error::Error>> {
         match self {
-            Messenger::WS(ws) => ws.is_closed().await,
-            _ => todo!(),
+            Messenger::Amqp(a) => a.is_closed().await,
+            Messenger::Websocket(ws) => ws.is_closed().await,
         }
     }
 
     async fn reconnect(&self) -> Result<Self, Box<dyn std::error::Error>> {
         match self {
-            Messenger::WS(ws) => Ok(Messenger::WS(ws.reconnect().await?)),
-            _ => todo!(),
+            Messenger::Amqp(a) => Ok(Messenger::Amqp(a.reconnect().await?)),
+            Messenger::Websocket(ws) => Ok(Messenger::Websocket(ws.reconnect().await?)),
         }
     }
 
     async fn send_message(&self, msg: Message) -> Result<(), Box<dyn std::error::Error>> {
         match self {
-            Messenger::WS(ws) => ws.send_message(msg).await,
-            Messenger::Kafka(k) => k.send_message(msg).await,
+            Messenger::Amqp(a) => a.send_message(msg).await,
+            Messenger::Websocket(ws) => ws.send_message(msg).await,
         }
+    }
+
+    async fn send_unblock_request(
+        &self,
+        msg: UnblockRequest,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match self {
+            Messenger::Amqp(a) => a.send_unblock_request(msg).await,
+            _ => todo!(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Messenger;
+
+    #[test]
+    fn test_messenger_deserialize() -> Result<(), Box<dyn std::error::Error>> {
+        let _ = serde_json::from_str::<Messenger>(
+            r#"
+             {
+                "type": "websocket",
+                "value": "wss://some-hub.com/ws/067d1d3c-4342-4cbf-a634-14d7ea87b8b3"
+            }
+        "#,
+        )?;
+
+        let _ = serde_json::from_str::<Messenger>(
+            r#"
+             {
+                "type": "amqp",
+                "value": "abd645c8-646c-4df1-9cd9-38b91e55062e;amqp://guest:guest@amqp-url:5672"
+            }
+        "#,
+        )?;
+
+        Ok(())
     }
 }
