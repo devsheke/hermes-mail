@@ -97,7 +97,7 @@ pub struct LocalBlockMessage {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnblockRequest {
-    pub instance: String,
+    pub id: String,
     pub user: String,
     pub email: String,
     pub password: String,
