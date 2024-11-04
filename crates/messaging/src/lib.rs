@@ -45,9 +45,10 @@ pub struct Message {
 
 impl Message {
     pub fn new_messenger_disconnect() -> Self {
-        let mut msg = Message::default();
-        msg.kind = MessageKind::MessengerDisconnect;
-        msg
+        Self {
+            kind: MessageKind::MessengerDisconnect,
+            ..Default::default()
+        }
     }
 
     pub fn new_block(instance: String, user: String, email: String) -> Self {

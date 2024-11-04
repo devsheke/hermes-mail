@@ -6,10 +6,10 @@ use std::process;
 use thiserror;
 use tracing::{error, warn};
 
-const TASK_EXCHANGE: &'static str = "taskExchange";
-const TASK_COMMON_ROUTE: &'static str = "taskCommon";
-const UNBLOCKER_EXCHANGE: &'static str = "unblockerExchange";
-const UNBLOCKER_TASK_ROUTE: &'static str = "unblockerTask";
+const TASK_EXCHANGE: &str = "taskExchange";
+const TASK_COMMON_ROUTE: &str = "taskCommon";
+const UNBLOCKER_EXCHANGE: &str = "unblockerExchange";
+const UNBLOCKER_TASK_ROUTE: &str = "unblockerTask";
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -197,7 +197,7 @@ impl Amqp {
             read_stream.await;
         });
 
-        return Ok(());
+        Ok(())
     }
 }
 
@@ -212,7 +212,7 @@ impl super::MessengerDispatch for Amqp {
 
         self.consume().await?;
 
-        return Ok(self.channel.0.clone());
+        Ok(self.channel.0.clone())
     }
 
     async fn get_new_messages(&self) -> Result<Vec<Message>, Box<dyn std::error::Error>> {
@@ -226,14 +226,14 @@ impl super::MessengerDispatch for Amqp {
         if let Some(pool) = &self.pool {
             return Ok(pool.is_closed());
         }
-        return Ok(true);
+        Ok(true)
     }
 
     async fn reconnect(&self) -> Result<Self, Box<dyn std::error::Error>> {
         let mut amqp = self.clone();
         amqp.connect().await?;
 
-        return Ok(amqp);
+        Ok(amqp)
     }
 
     async fn send_message(&self, msg: crate::Message) -> Result<(), Box<dyn std::error::Error>> {
@@ -245,7 +245,7 @@ impl super::MessengerDispatch for Amqp {
         let conn = pool.get().await?;
         let channel = conn.create_channel().await?;
 
-        let _ = channel
+        channel
             .basic_publish(
                 TASK_EXCHANGE,
                 TASK_COMMON_ROUTE,
@@ -270,15 +270,16 @@ impl super::MessengerDispatch for Amqp {
         let conn = pool.get().await?;
         let channel = conn.create_channel().await?;
 
-        let _ = channel
+        channel
             .basic_publish(
                 UNBLOCKER_EXCHANGE,
-                &UNBLOCKER_TASK_ROUTE,
+                UNBLOCKER_TASK_ROUTE,
                 lapin::options::BasicPublishOptions::default(),
                 &serde_json::to_vec(&msg)?,
                 lapin::BasicProperties::default().with_content_type("application/json".into()),
             )
             .await?;
+
         Ok(())
     }
 }
@@ -294,18 +295,14 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_amqp_unblock() -> Result<(), Box<dyn std::error::Error>> {
         let addr = env::var("URL").expect("Missing amqp address");
-        let instance = "04f9a21b-838f-4dee-bbc6-6783ea0e5141".to_string();
+        let id = "04f9a21b-838f-4dee-bbc6-6783ea0e5141".to_string();
         let user = "74a87eb2-b22e-4040-9135-d706e6eb80fe".to_string();
-        let mut amqp = Amqp::new(
-            instance.clone(),
-            addr,
-            lapin::ConnectionProperties::default(),
-        );
+        let mut amqp = Amqp::new(id.clone(), addr, lapin::ConnectionProperties::default());
 
         amqp.connect().await?;
 
         let msg = UnblockRequest {
-            instance,
+            id,
             user,
             email: "some_email@email.com".into(),
             password: "somepassword@1234".into(),

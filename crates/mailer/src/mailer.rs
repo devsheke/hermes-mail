@@ -406,7 +406,7 @@ impl Mailer {
             email: user.email.clone(),
             user: dash.user.clone(),
             password: user.password.clone(),
-            instance: dash.instance.clone(),
+            id: dash.instance.clone(),
             provider: dash.provider.clone(),
         };
 
@@ -437,7 +437,7 @@ impl Mailer {
             .messenger
             .connect()
             .await
-            .map_err(|err| Error::MessengerConnection(err))?;
+            .map_err(Error::MessengerConnection)?;
 
         if let Some(b) = dash.block_querier.clone() {
             let _ = b.query_block(self.senders.iter().map(Sender::from).collect(), tx);
