@@ -3,6 +3,7 @@ use futures::{
     future, pin_mut,
     stream::{SplitStream, StreamExt},
 };
+use serde::{de::Visitor, Deserialize};
 use std::process;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
@@ -13,6 +14,7 @@ use tracing::{error, info, warn};
 pub type WSChannelSender = futures_channel::mpsc::UnboundedSender<TungsteniteMessage>;
 pub type WSChannelReceiver = futures_channel::mpsc::UnboundedReceiver<TungsteniteMessage>;
 
+#[derive(Debug)]
 pub struct WSMessenger {
     url: String,
     inbound_tx: crossbeam_channel::Sender<super::Message>,
@@ -23,6 +25,32 @@ pub struct WSMessenger {
 impl Default for WSMessenger {
     fn default() -> Self {
         Self::new("".into())
+    }
+}
+
+struct WSMessengerDeserializer;
+
+impl<'de> Visitor<'de> for WSMessengerDeserializer {
+    type Value = WSMessenger;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("Websocket URL String")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(WSMessenger::new(v.into()))
+    }
+}
+
+impl<'de> Deserialize<'de> for WSMessenger {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_str(WSMessengerDeserializer)
     }
 }
 
@@ -86,7 +114,13 @@ async fn read_stream(
                     continue;
                 }
                 TungsteniteMessage::Close(_) => {
-                    warn!(msg = "socket connection closed already");
+                    warn!(msg = "socket connection closed");
+                    if let Err(err) = inbound_tx.send(Message::new_messenger_disconnect()) {
+                        error!(
+                            msg = "failed to send messenger disconnect notification",
+                            err = format!("{err}")
+                        );
+                    }
                     return;
                 }
                 _ => continue,
@@ -96,6 +130,12 @@ async fn read_stream(
                     tokio_tungstenite::tungstenite::Error::ConnectionClosed
                     | tokio_tungstenite::tungstenite::Error::AlreadyClosed => {
                         warn!(msg = "socket connection closed already");
+                        if let Err(err) = inbound_tx.send(Message::new_messenger_disconnect()) {
+                            error!(
+                                msg = "failed to send messenger disconnect notification",
+                                err = format!("{err}")
+                            );
+                        }
                         return;
                     }
                     _ => {
@@ -182,6 +222,13 @@ impl super::MessengerDispatch for WSMessenger {
         ws.connect().await?;
 
         Ok(ws)
+    }
+
+    async fn send_unblock_request(
+        &self,
+        _: crate::UnblockRequest,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        todo!()
     }
 }
 
