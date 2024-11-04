@@ -195,7 +195,6 @@ impl Builder {
             daily_limit: self.daily_limit,
             dashboard_config: self.dashboard_config,
             failures,
-            messenger: None,
             rate: self.rate,
             read_receipts: self.read_receipts,
             receivers_len: receivers.len(),

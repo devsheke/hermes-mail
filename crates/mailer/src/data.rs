@@ -70,13 +70,14 @@ impl<'de> Deserialize<'de> for CodesVec {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct DashboardConfig {
     pub domain: String,
     pub api_key: String,
     pub user: String,
     pub instance: String,
-    pub unblock_url: Option<String>,
+    pub messenger: hermes_messaging::Messenger,
+    pub provider: String,
     pub block_querier: Option<block_query::BlockQueriers>,
 }
 

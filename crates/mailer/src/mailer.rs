@@ -4,7 +4,7 @@ use crate::{
     data::{DashboardConfig, Receivers, Sender, Senders},
 };
 use chrono::{DateTime, Datelike, Duration, Local, Timelike};
-use hermes_messaging::{stats::Stats, websocket::WSMessenger, Messenger, MessengerDispatch};
+use hermes_messaging::{stats::Stats, MessengerDispatch};
 use indicatif::ProgressStyle;
 use lettre::transport::smtp::response::Code;
 use std::{
@@ -23,8 +23,8 @@ mod task;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("failed to connect to message hub: {1}")]
-    MessengerConnection(Box<dyn std::error::Error>, String),
+    #[error("failed to connect to messenger hub")]
+    MessengerConnection(Box<dyn std::error::Error>),
 }
 
 struct Cursor {
@@ -57,7 +57,6 @@ pub struct Mailer {
     daily_limit: u32,
     dashboard_config: Option<DashboardConfig>,
     failures: Receivers,
-    messenger: Option<Messenger>,
     rate: Duration,
     read_receipts: bool,
     receivers_len: usize,
@@ -94,36 +93,29 @@ impl Mailer {
                 Ok(task) => {
                     let stats = self.stats.get_mut(&task.sender.email).unwrap();
                     stats.inc_sent(1);
-                    info!(
-                        msg = "success",
-                        sender = task.sender.email,
-                        receiver = task.receiver.email
-                    );
 
                     if let Some(dash) = &self.dashboard_config {
-                        if let Some(messenger) = &self.messenger {
-                            let message = match hermes_messaging::Message::new_sender_stats(
-                                dash.instance.clone(),
-                                dash.user.clone(),
-                                stats,
-                            ) {
-                                Ok(m) => m,
-                                Err(err) => {
-                                    error!(
-                                        msg = "failed to serialize sender stats message",
-                                        err = format!("{err}")
-                                    );
-                                    continue;
-                                }
-                            };
-
-                            if let Err(err) = messenger.send_message(message).await {
+                        let message = match hermes_messaging::Message::new_sender_stats(
+                            dash.instance.clone(),
+                            dash.user.clone(),
+                            stats,
+                        ) {
+                            Ok(m) => m,
+                            Err(err) => {
                                 error!(
-                                    msg = "failed to send sender stats message",
+                                    msg = "failed to serialize sender stats message",
                                     err = format!("{err}")
                                 );
-                            };
-                        }
+                                continue;
+                            }
+                        };
+
+                        if let Err(err) = dash.messenger.send_message(message).await {
+                            error!(
+                                msg = "failed to send sender stats message",
+                                err = format!("{err}")
+                            );
+                        };
                     }
 
                     stats.set_timeout(self.rate);
@@ -149,21 +141,20 @@ impl Mailer {
                                 stats.block();
 
                                 if let Some(dash) = &self.dashboard_config {
-                                    if let Some(messenger) = &self.messenger {
-                                        let res = messenger
-                                            .send_message(hermes_messaging::Message::new_block(
-                                                dash.instance.clone(),
-                                                dash.user.clone(),
-                                                task.sender.email.clone(),
-                                            ))
-                                            .await;
+                                    let res = dash
+                                        .messenger
+                                        .send_message(hermes_messaging::Message::new_block(
+                                            dash.instance.clone(),
+                                            dash.user.clone(),
+                                            task.sender.email.clone(),
+                                        ))
+                                        .await;
 
-                                        if let Err(err) = res {
-                                            error!(
-                                                msg = "failed to send block message",
-                                                err = format!("{err}")
-                                            )
-                                        }
+                                    if let Err(err) = res {
+                                        error!(
+                                            msg = "failed to send block message",
+                                            err = format!("{err}")
+                                        )
                                     }
                                 }
                             }
@@ -173,50 +164,47 @@ impl Mailer {
                                 stats.inc_bounced(1);
 
                                 if let Some(dash) = &self.dashboard_config {
-                                    if let Some(messenger) = &self.messenger {
-                                        let res = messenger
-                                            .send_message(hermes_messaging::Message::new_block(
-                                                dash.instance.clone(),
-                                                dash.user.clone(),
-                                                task.sender.email.clone(),
-                                            ))
-                                            .await;
+                                    let res = dash
+                                        .messenger
+                                        .send_message(hermes_messaging::Message::new_block(
+                                            dash.instance.clone(),
+                                            dash.user.clone(),
+                                            task.sender.email.clone(),
+                                        ))
+                                        .await;
 
-                                        if let Err(err) = res {
-                                            error!(
-                                                msg = "failed to send block message",
-                                                err = format!("{err}")
-                                            )
-                                        }
+                                    if let Err(err) = res {
+                                        error!(
+                                            msg = "failed to send block message",
+                                            err = format!("{err}")
+                                        )
                                     }
                                 }
                             }
                         }
 
                         if let Some(dash) = &self.dashboard_config {
-                            if let Some(messenger) = &self.messenger {
-                                let message = match hermes_messaging::Message::new_sender_stats(
-                                    dash.instance.clone(),
-                                    dash.user.clone(),
-                                    stats,
-                                ) {
-                                    Ok(m) => m,
-                                    Err(err) => {
-                                        error!(
-                                            msg = "failed to serialize sender stats message",
-                                            err = format!("{err}")
-                                        );
-                                        continue;
-                                    }
-                                };
-
-                                if let Err(err) = messenger.send_message(message).await {
+                            let message = match hermes_messaging::Message::new_sender_stats(
+                                dash.instance.clone(),
+                                dash.user.clone(),
+                                stats,
+                            ) {
+                                Ok(m) => m,
+                                Err(err) => {
                                     error!(
-                                        msg = "failed to send sender stats message",
+                                        msg = "failed to serialize sender stats message",
                                         err = format!("{err}")
                                     );
-                                };
-                            }
+                                    continue;
+                                }
+                            };
+
+                            if let Err(err) = dash.messenger.send_message(message).await {
+                                error!(
+                                    msg = "failed to send sender stats message",
+                                    err = format!("{err}")
+                                );
+                            };
                         }
                     }
                     _ => {
@@ -231,7 +219,7 @@ impl Mailer {
     }
 
     fn pause(timeout: DateTime<Local>) {
-        let (now, timeout) = (Local::now(), timeout);
+        let now = Local::now();
         if now.lt(&timeout) {
             let diff = timeout - now;
             warn!(msg = "pausing", duration = format!("{diff}"));
@@ -274,17 +262,17 @@ impl Mailer {
     }
 
     async fn recover_messenger(&mut self) {
-        let messenger = match &mut self.messenger {
-            Some(m) => m,
+        let dash = match &mut self.dashboard_config {
+            Some(d) => d,
             None => return,
         };
 
-        match messenger.is_closed().await {
+        match dash.messenger.is_closed().await {
             Ok(closed) => {
                 if closed {
-                    match messenger.reconnect().await {
+                    match dash.messenger.reconnect().await {
                         Ok(m) => {
-                            let _ = self.messenger.insert(m);
+                            dash.messenger = m;
                         }
                         Err(err) => error!(
                             msg = "failed to reconnect to messenger",
@@ -303,12 +291,12 @@ impl Mailer {
     }
 
     async fn read_messages(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let messenger = match &self.messenger {
-            Some(m) => m,
+        let dash = match &mut self.dashboard_config {
+            Some(d) => d,
             None => return Ok(()),
         };
 
-        let messages = messenger.get_new_messages().await?;
+        let messages = dash.messenger.get_new_messages().await?;
 
         for message in messages {
             match message.kind {
@@ -361,43 +349,36 @@ impl Mailer {
                     sender.block();
                     sender.inc_bounced(data.bounced);
 
-                    let dash = match &self.dashboard_config {
-                        Some(d) => d,
-                        None => continue,
-                    };
+                    dash.messenger
+                        .send_message(hermes_messaging::Message::new_block(
+                            dash.instance.clone(),
+                            dash.user.clone(),
+                            data.email.clone(),
+                        ))
+                        .await
+                        .unwrap_or_else(|err| {
+                            error!(
+                                msg = "failed to send sender block message",
+                                err = format!("{err}")
+                            );
+                        });
 
-                    if let Some(messenger) = &self.messenger {
-                        messenger
-                            .send_message(hermes_messaging::Message::new_block(
+                    dash.messenger
+                        .send_message(
+                            hermes_messaging::Message::new_sender_stats(
                                 dash.instance.clone(),
                                 dash.user.clone(),
-                                data.email.clone(),
-                            ))
-                            .await
-                            .unwrap_or_else(|err| {
-                                error!(
-                                    msg = "failed to send sender block message",
-                                    err = format!("{err}")
-                                );
-                            });
-
-                        messenger
-                            .send_message(
-                                hermes_messaging::Message::new_sender_stats(
-                                    dash.instance.clone(),
-                                    dash.user.clone(),
-                                    sender,
-                                )
-                                .unwrap(),
+                                sender,
                             )
-                            .await
-                            .unwrap_or_else(|err| {
-                                error!(
-                                    msg = "failed to send sender stats message",
-                                    err = format!("{err}")
-                                );
-                            });
-                    }
+                            .unwrap(),
+                        )
+                        .await
+                        .unwrap_or_else(|err| {
+                            error!(
+                                msg = "failed to send sender stats message",
+                                err = format!("{err}")
+                            );
+                        });
 
                     if let Err(err) = Self::send_unblock_request(dash, &data).await {
                         warn!(
@@ -406,6 +387,9 @@ impl Mailer {
                             err = format!("{err}")
                         );
                     }
+                }
+                hermes_messaging::MessageKind::MessengerDisconnect => {
+                    dash.messenger = dash.messenger.reconnect().await?;
                 }
                 _ => continue,
             }
@@ -417,27 +401,24 @@ impl Mailer {
     async fn send_unblock_request(
         dash: &DashboardConfig,
         user: &hermes_messaging::LocalBlockMessage,
-    ) -> Result<(), reqwest::Error> {
-        let unblock_url = match &dash.unblock_url {
-            Some(url) => url,
-            None => return Ok(()),
-        };
-
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let body = hermes_messaging::UnblockRequest {
             email: user.email.clone(),
+            user: dash.user.clone(),
             password: user.password.clone(),
             instance: dash.instance.clone(),
-            should_unblock: true,
+            provider: dash.provider.clone(),
         };
 
-        let req = reqwest::Client::new()
-            .post(unblock_url)
-            .bearer_auth(&dash.api_key)
-            .json(&body);
+        let message = hermes_messaging::Message {
+            from_type: hermes_messaging::SenderType::Instance,
+            kind: hermes_messaging::MessageKind::Unblock,
+            from: dash.instance.clone(),
+            to: "".into(),
+            data: serde_json::to_string(&body)?,
+        };
 
-        let _ = req.send().await?;
-
-        Ok(())
+        dash.messenger.send_message(message).await
     }
 
     fn reset_daily_lim(&mut self) {
@@ -447,23 +428,16 @@ impl Mailer {
     }
 
     async fn init_dashboard(&mut self) -> Result<(), Error> {
-        let dash = match &self.dashboard_config {
+        let dash = match &mut self.dashboard_config {
             None => return Ok(()),
             Some(d) => d,
         };
 
-        let ws_url = dash.domain.replace("http", "ws");
-        let instance = dash.instance.clone();
-
-        let url = format!("{}/ws/instances/{}", ws_url, instance);
-        let mut ws = WSMessenger::new(url.clone());
-
-        let tx = ws
+        let tx = dash
+            .messenger
             .connect()
             .await
-            .map_err(|err| Error::MessengerConnection(err, url))?;
-
-        self.messenger = Some(Messenger::WS(ws));
+            .map_err(|err| Error::MessengerConnection(err))?;
 
         if let Some(b) = dash.block_querier.clone() {
             let _ = b.query_block(self.senders.iter().map(Sender::from).collect(), tx);
@@ -612,15 +586,13 @@ impl Mailer {
 
     async fn send_task_stats(&self, sent: usize) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(dash) = &self.dashboard_config {
-            if let Some(messenger) = &self.messenger {
-                messenger
-                    .send_message(hermes_messaging::Message::new_task_stats(
-                        dash.instance.clone(),
-                        dash.user.clone(),
-                        sent as i64,
-                    ))
-                    .await?;
-            }
+            dash.messenger
+                .send_message(hermes_messaging::Message::new_task_stats(
+                    dash.instance.clone(),
+                    dash.user.clone(),
+                    sent as i64,
+                ))
+                .await?;
         }
 
         Ok(())
@@ -723,37 +695,4 @@ fn time_until_day(days: i64) -> Duration {
     dur -= Duration::try_seconds(now.second() as i64).unwrap();
 
     dur
-}
-
-#[cfg(test)]
-mod tests {
-    use std::env;
-
-    use crate::data::DashboardConfig;
-    use crate::mailer::Mailer;
-
-    #[tokio::test]
-    async fn test_send_unblock_request() -> Result<(), reqwest::Error> {
-        let email = env::var("EMAIL").expect("failed to fetch 'EMAIL' from env");
-        let password = env::var("PASSWORD").expect("failed to fetch 'PASSWORD' from env");
-
-        let dash = DashboardConfig {
-            domain: "".into(),
-            instance: env::var("INSTANCE").expect("failed to fetch 'INSTANCE' from env"),
-            api_key: env::var("API_KEY").expect("failed to fetch 'API_KEY' from env"),
-            user: env::var("USER").expect("failed to fetch 'USER' from env"),
-            unblock_url: Some(env::var("URL").expect("failed to fetch 'URL' env")),
-            block_querier: None,
-        };
-
-        let msg = hermes_messaging::LocalBlockMessage {
-            bounced: 0,
-            email,
-            password,
-        };
-
-        Mailer::send_unblock_request(&dash, &msg).await?;
-
-        return Ok(());
-    }
 }
