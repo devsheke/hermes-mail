@@ -15,6 +15,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 use thiserror::Error;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, info_span, warn, Span};
 use tracing_indicatif::span_ext::IndicatifSpanExt;
 
@@ -427,11 +428,13 @@ impl Mailer {
         self.stats.iter_mut().for_each(|(_, s)| s.reset_daily());
     }
 
-    async fn init_dashboard(&mut self) -> Result<(), Error> {
+    async fn init_dashboard(&mut self, mutex: Arc<Mutex<()>>) -> Result<(), Error> {
         let dash = match &mut self.dashboard_config {
             None => return Ok(()),
             Some(d) => d,
         };
+
+        dash.messenger.set_pause_mutex(mutex);
 
         let tx = dash
             .messenger
@@ -447,7 +450,8 @@ impl Mailer {
     }
 
     pub async fn run(&mut self) -> Result<(), Error> {
-        self.init_dashboard().await?;
+        let pause_mutex = Arc::new(Mutex::new(()));
+        self.init_dashboard(pause_mutex.clone()).await?;
 
         let mut cursor = Cursor::new(self.senders.len());
         let (mut sent, mut skips) = (0, 0);
@@ -464,6 +468,7 @@ impl Mailer {
             }
 
             let mut tasks = Vec::with_capacity(self.workers);
+            let guard = pause_mutex.lock().await;
             for _ in 0..self.workers {
                 if self.senders.is_empty() {
                     info!(msg = "sent all emails", total_sent = sent);
@@ -543,6 +548,7 @@ impl Mailer {
                 self.recover_messenger().await;
             }
 
+            drop(guard);
             let _sent = self.collect_tasks(tasks).await;
 
             Span::current().pb_inc(_sent as u64);

@@ -2,9 +2,10 @@ use crate::{Message, MessageKind};
 use futures::{pin_mut, StreamExt};
 use lapin::ConnectionProperties;
 use serde::{de::Visitor, Deserialize};
-use std::process;
+use std::{process, sync::Arc};
 use thiserror;
-use tracing::{error, warn};
+use tokio::sync::Mutex;
+use tracing::{error, info, warn};
 
 const TASK_EXCHANGE: &str = "taskExchange";
 const TASK_COMMON_ROUTE: &str = "taskCommon";
@@ -26,6 +27,7 @@ pub struct Amqp {
         crossbeam_channel::Receiver<Message>,
     ),
     pool: Option<deadpool_lapin::Pool>,
+    pause_mutex: Arc<Mutex<()>>,
 }
 
 struct AmqpDeserializer;
@@ -81,6 +83,7 @@ impl Amqp {
             cfg,
             channel,
             pool: None,
+            pause_mutex: Arc::new(Mutex::new(())),
         }
     }
 
@@ -137,8 +140,11 @@ impl Amqp {
             )
             .await?;
 
+        let pause_mutex = Arc::clone(&self.pause_mutex);
         let tx = self.channel.0.clone();
+
         let read_stream = async move {
+            let mut pause_guard = None;
             while let Some(delivery) = consumer.next().await {
                 let deliver = match delivery {
                     Ok(d) => d,
@@ -178,9 +184,22 @@ impl Amqp {
                     }
                 };
 
-                if message.kind == MessageKind::Stop {
-                    warn!(msg = "received stop signal from server. stopping task.");
-                    process::exit(130);
+                match message.kind {
+                    MessageKind::Stop => {
+                        warn!(msg = "received stop signal from server. stopping task.");
+                        process::exit(130);
+                    }
+                    MessageKind::MailerPause => {
+                        if pause_guard.is_none() {
+                            pause_guard = Some(pause_mutex.lock().await);
+                            warn!(msg = "received pause signal from server.")
+                        }
+                    }
+                    MessageKind::MailerResume => {
+                        pause_guard = None;
+                        info!(msg = "received resume signal from server.")
+                    }
+                    _ => {}
                 }
 
                 if let Err(err) = tx.send(message) {
@@ -192,9 +211,16 @@ impl Amqp {
             }
         };
 
-        tokio::spawn(async {
+        let tx = self.channel.0.clone();
+        tokio::spawn(async move {
             pin_mut!(read_stream);
             read_stream.await;
+            if let Err(err) = tx.send(Message::new_messenger_disconnect()) {
+                error!(
+                    msg = "failed to send messenger disconnect notification",
+                    err = format!("{err}")
+                );
+            }
         });
 
         Ok(())
@@ -202,6 +228,10 @@ impl Amqp {
 }
 
 impl super::MessengerDispatch for Amqp {
+    fn set_pause_mutex(&mut self, mutex: Arc<Mutex<()>>) {
+        self.pause_mutex = mutex;
+    }
+
     async fn connect(
         &mut self,
     ) -> Result<crossbeam_channel::Sender<Message>, Box<dyn std::error::Error>> {
@@ -286,11 +316,9 @@ impl super::MessengerDispatch for Amqp {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
-
-    use crate::{MessengerDispatch, UnblockRequest};
-
     use super::Amqp;
+    use crate::{MessengerDispatch, UnblockRequest};
+    use std::env;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_amqp_unblock() -> Result<(), Box<dyn std::error::Error>> {
