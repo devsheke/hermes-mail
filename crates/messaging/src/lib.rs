@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use amqp::Amqp;
 use futures::Future;
 use serde::{self, Deserialize, Serialize};
+use tokio::sync::Mutex;
 use websocket::WSMessenger;
 
 pub mod amqp;
@@ -22,6 +25,8 @@ pub enum MessageKind {
     Unblock,
     SenderPause,
     SenderResume,
+    MailerPause,
+    MailerResume,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -139,6 +144,8 @@ where
         &self,
         msg: UnblockRequest,
     ) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
+
+    fn set_pause_mutex(&mut self, mutex: Arc<Mutex<()>>);
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,6 +199,13 @@ impl MessengerDispatch for Messenger {
         match self {
             Messenger::Amqp(a) => a.send_unblock_request(msg).await,
             _ => todo!(),
+        }
+    }
+
+    fn set_pause_mutex(&mut self, mutex: Arc<Mutex<()>>) {
+        match self {
+            Messenger::Amqp(a) => a.set_pause_mutex(mutex),
+            Messenger::Websocket(ws) => ws.set_pause_mutex(mutex),
         }
     }
 }
