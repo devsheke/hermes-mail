@@ -1,4 +1,4 @@
-use crate::{Message, MessageKind};
+use crate::{Message, MessageKind, MessengerDispatch};
 use futures::{pin_mut, StreamExt};
 use lapin::ConnectionProperties;
 use serde::{de::Visitor, Deserialize};
@@ -227,7 +227,7 @@ impl Amqp {
     }
 }
 
-impl super::MessengerDispatch for Amqp {
+impl MessengerDispatch for Amqp {
     fn set_pause_mutex(&mut self, mutex: Arc<Mutex<()>>) {
         self.pause_mutex = mutex;
     }
@@ -267,12 +267,22 @@ impl super::MessengerDispatch for Amqp {
     }
 
     async fn send_message(&self, msg: crate::Message) -> Result<(), Box<dyn std::error::Error>> {
-        let pool = match &self.pool {
+        let mut pool = match &self.pool {
             Some(p) => p,
             None => return Err(Box::new(Error::UninitializedPool)),
         };
 
-        let conn = pool.get().await?;
+        let mut conn = pool.get().await?;
+        if !conn.status().connected() {
+            let amqp = &self.reconnect().await?;
+            pool = match &amqp.pool {
+                Some(p) => p,
+                None => return Err(Box::new(Error::UninitializedPool)),
+            };
+
+            conn = pool.get().await?;
+        }
+
         let channel = conn.create_channel().await?;
 
         channel
