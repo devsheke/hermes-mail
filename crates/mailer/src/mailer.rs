@@ -451,7 +451,7 @@ impl Mailer {
 
     pub async fn run(&mut self) -> Result<(), Error> {
         let pause_mutex = Arc::new(Mutex::new(()));
-        self.init_dashboard(pause_mutex.clone()).await?;
+        self.init_dashboard(Arc::clone(&pause_mutex)).await?;
 
         let mut cursor = Cursor::new(self.senders.len());
         let (mut sent, mut skips) = (0, 0);

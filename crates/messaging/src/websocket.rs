@@ -203,7 +203,7 @@ impl super::MessengerDispatch for WSMessenger {
             read,
             _tx,
             inbound_tx.clone(),
-            self.pause_mutex.clone(),
+            Arc::clone(&self.pause_mutex),
         ));
 
         tokio::spawn(async move {
