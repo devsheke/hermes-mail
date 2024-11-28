@@ -2,10 +2,9 @@ use crate::{Message, MessageKind, MessengerDispatch};
 use futures::{pin_mut, StreamExt};
 use lapin::ConnectionProperties;
 use serde::{de::Visitor, Deserialize};
-use std::{process, sync::Arc};
+use std::process;
 use thiserror;
-use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 const TASK_EXCHANGE: &str = "taskExchange";
 const TASK_COMMON_ROUTE: &str = "taskCommon";
@@ -27,7 +26,6 @@ pub struct Amqp {
         crossbeam_channel::Receiver<Message>,
     ),
     pool: Option<deadpool_lapin::Pool>,
-    pause_mutex: Arc<Mutex<()>>,
 }
 
 struct AmqpDeserializer;
@@ -83,7 +81,6 @@ impl Amqp {
             cfg,
             channel,
             pool: None,
-            pause_mutex: Arc::new(Mutex::new(())),
         }
     }
 
@@ -140,11 +137,9 @@ impl Amqp {
             )
             .await?;
 
-        let pause_mutex = Arc::clone(&self.pause_mutex);
         let tx = self.channel.0.clone();
 
         let read_stream = async move {
-            let mut pause_guard = None;
             while let Some(delivery) = consumer.next().await {
                 let deliver = match delivery {
                     Ok(d) => d,
@@ -189,16 +184,6 @@ impl Amqp {
                         warn!(msg = "received stop signal from server. stopping task.");
                         process::exit(130);
                     }
-                    MessageKind::MailerPause => {
-                        if pause_guard.is_none() {
-                            pause_guard = Some(pause_mutex.lock().await);
-                            warn!(msg = "received pause signal from server.")
-                        }
-                    }
-                    MessageKind::MailerResume => {
-                        pause_guard = None;
-                        info!(msg = "received resume signal from server.")
-                    }
                     _ => {}
                 }
 
@@ -228,10 +213,6 @@ impl Amqp {
 }
 
 impl MessengerDispatch for Amqp {
-    fn set_pause_mutex(&mut self, mutex: Arc<Mutex<()>>) {
-        self.pause_mutex = mutex;
-    }
-
     async fn connect(
         &mut self,
     ) -> Result<crossbeam_channel::Sender<Message>, Box<dyn std::error::Error>> {
@@ -266,7 +247,10 @@ impl MessengerDispatch for Amqp {
         Ok(amqp)
     }
 
-    async fn send_message(&self, msg: crate::Message) -> Result<(), Box<dyn std::error::Error>> {
+    async fn send_message(
+        &mut self,
+        msg: crate::Message,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut pool = match &self.pool {
             Some(p) => p,
             None => return Err(Box::new(Error::UninitializedPool)),

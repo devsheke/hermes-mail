@@ -4,8 +4,8 @@ use futures::{
     stream::{SplitStream, StreamExt},
 };
 use serde::{de::Visitor, Deserialize};
-use std::{process, sync::Arc};
-use tokio::{net::TcpStream, sync::Mutex};
+use std::process;
+use tokio::net::TcpStream;
 use tokio_tungstenite::{
     connect_async, tungstenite::Message as TungsteniteMessage, MaybeTlsStream, WebSocketStream,
 };
@@ -20,7 +20,6 @@ pub struct WSMessenger {
     inbound_tx: crossbeam_channel::Sender<super::Message>,
     inbound_rx: crossbeam_channel::Receiver<super::Message>,
     outbound_tx: Option<WSChannelSender>,
-    pause_mutex: Arc<Mutex<()>>,
 }
 
 impl Default for WSMessenger {
@@ -63,7 +62,6 @@ impl WSMessenger {
             inbound_tx,
             inbound_rx,
             outbound_tx: None,
-            pause_mutex: Arc::new(Mutex::new(())),
         }
     }
 
@@ -87,9 +85,7 @@ async fn read_stream(
     mut stream: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     outbound_tx: WSChannelSender,
     inbound_tx: crossbeam_channel::Sender<Message>,
-    pause_mutex: Arc<Mutex<()>>,
 ) {
-    let mut pause_guard = None;
     while let Some(raw_message) = stream.next().await {
         let data = match raw_message {
             Ok(d) => match d {
@@ -162,16 +158,6 @@ async fn read_stream(
                 warn!(msg = "received stop signal from server. stopping task.");
                 process::exit(130);
             }
-            MessageKind::MailerPause => {
-                if pause_guard.is_none() {
-                    pause_guard = Some(pause_mutex.lock().await);
-                    warn!(msg = "received pause signal from server.")
-                }
-            }
-            MessageKind::MailerResume => {
-                pause_guard = None;
-                info!(msg = "received resume signal from server.")
-            }
             _ => {}
         }
 
@@ -182,10 +168,6 @@ async fn read_stream(
 }
 
 impl super::MessengerDispatch for WSMessenger {
-    fn set_pause_mutex(&mut self, mutex: Arc<Mutex<()>>) {
-        self.pause_mutex = mutex;
-    }
-
     async fn connect(
         &mut self,
     ) -> Result<crossbeam_channel::Sender<Message>, Box<dyn std::error::Error>> {
@@ -199,12 +181,7 @@ impl super::MessengerDispatch for WSMessenger {
 
         let (write, read) = ws_stream.split();
         let write_stream = rx.map(Ok).forward(write);
-        let read_stream = tokio::spawn(read_stream(
-            read,
-            _tx,
-            inbound_tx.clone(),
-            Arc::clone(&self.pause_mutex),
-        ));
+        let read_stream = tokio::spawn(read_stream(read, _tx, inbound_tx.clone()));
 
         tokio::spawn(async move {
             pin_mut!(write_stream, read_stream);
@@ -222,7 +199,14 @@ impl super::MessengerDispatch for WSMessenger {
         Ok(self.inbound_tx.clone())
     }
 
-    async fn send_message(&self, msg: crate::Message) -> Result<(), Box<dyn std::error::Error>> {
+    async fn send_message(
+        &mut self,
+        msg: crate::Message,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if self.is_closed().await? {
+            *self = self.reconnect().await?;
+        }
+
         if let Some(tx) = &self.outbound_tx {
             let msg: String = serde_json::to_string(&msg)?;
             tx.unbounded_send(TungsteniteMessage::Text(msg))?;

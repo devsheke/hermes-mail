@@ -192,6 +192,7 @@ impl Builder {
 
         let failures = Receivers::with_capacity(receivers.len());
         Ok(super::Mailer {
+            paused: false,
             daily_limit: self.daily_limit,
             dashboard_config: self.dashboard_config,
             failures,

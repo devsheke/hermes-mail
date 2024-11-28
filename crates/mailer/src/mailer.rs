@@ -4,6 +4,7 @@ use crate::{
     data::{DashboardConfig, Receivers, Sender, Senders},
 };
 use chrono::{DateTime, Datelike, Duration, Local, Timelike};
+use core::time;
 use hermes_messaging::{stats::Stats, MessengerDispatch};
 use indicatif::ProgressStyle;
 use lettre::transport::smtp::response::Code;
@@ -15,7 +16,6 @@ use std::{
     thread::{self, JoinHandle},
 };
 use thiserror::Error;
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, info_span, warn, Span};
 use tracing_indicatif::span_ext::IndicatifSpanExt;
 
@@ -55,16 +55,17 @@ impl Cursor {
 }
 
 pub struct Mailer {
+    block_permanent: bool,
     daily_limit: u32,
     dashboard_config: Option<DashboardConfig>,
     failures: Receivers,
+    paused: bool,
     rate: Duration,
     read_receipts: bool,
     receivers_len: usize,
     save_progress: bool,
     senders: Vec<Arc<Sender>>,
     skip_codes: Vec<u16>,
-    block_permanent: bool,
     skip_weekends: bool,
     start: DateTime<Local>,
     stats: HashMap<String, Stats>,
@@ -95,7 +96,7 @@ impl Mailer {
                     let stats = self.stats.get_mut(&task.sender.email).unwrap();
                     stats.inc_sent(1);
 
-                    if let Some(dash) = &self.dashboard_config {
+                    if let Some(dash) = &mut self.dashboard_config {
                         let message = match hermes_messaging::Message::new_sender_stats(
                             dash.instance.clone(),
                             dash.user.clone(),
@@ -141,7 +142,7 @@ impl Mailer {
                             if self.block_permanent {
                                 stats.block();
 
-                                if let Some(dash) = &self.dashboard_config {
+                                if let Some(dash) = &mut self.dashboard_config {
                                     let res = dash
                                         .messenger
                                         .send_message(hermes_messaging::Message::new_block(
@@ -164,7 +165,7 @@ impl Mailer {
                                 stats.block();
                                 stats.inc_bounced(1);
 
-                                if let Some(dash) = &self.dashboard_config {
+                                if let Some(dash) = &mut self.dashboard_config {
                                     let res = dash
                                         .messenger
                                         .send_message(hermes_messaging::Message::new_block(
@@ -184,7 +185,7 @@ impl Mailer {
                             }
                         }
 
-                        if let Some(dash) = &self.dashboard_config {
+                        if let Some(dash) = &mut self.dashboard_config {
                             let message = match hermes_messaging::Message::new_sender_stats(
                                 dash.instance.clone(),
                                 dash.user.clone(),
@@ -291,6 +292,115 @@ impl Mailer {
         };
     }
 
+    async fn handle_message(
+        &mut self,
+        message: hermes_messaging::Message,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match message.kind {
+            hermes_messaging::MessageKind::SenderResume => {
+                if let Some(sender) = self.stats.get_mut(&message.data) {
+                    sender.unblock();
+                }
+            }
+
+            hermes_messaging::MessageKind::SenderPause => {
+                if let Some(sender) = self.stats.get_mut(&message.data) {
+                    sender.block();
+                }
+            }
+
+            hermes_messaging::MessageKind::Unblock => {
+                let data: hermes_messaging::UnblockResult =
+                    match serde_json::from_str(&message.data) {
+                        Ok(d) => d,
+                        Err(err) => {
+                            error!(
+                                msg = "failed to decode unblock message",
+                                err = format!("{err}")
+                            );
+                            return Ok(());
+                        }
+                    };
+
+                if !data.unblock {
+                    return Ok(());
+                }
+
+                let sender = match self.stats.get_mut(&data.email) {
+                    Some(s) => s,
+                    None => return Ok(()),
+                };
+
+                sender.unblock();
+                if data.timeout > 0 {
+                    sender.set_timeout(Duration::seconds(data.timeout));
+                }
+            }
+
+            hermes_messaging::MessageKind::LocalBlock => {
+                let data: hermes_messaging::LocalBlockMessage =
+                    serde_json::from_str(&message.data).unwrap();
+
+                let sender = match self.stats.get_mut(&data.email) {
+                    Some(s) => s,
+                    None => return Ok(()),
+                };
+
+                sender.block();
+                sender.inc_bounced(data.bounced);
+
+                let dash = self.dashboard_config.as_mut().unwrap();
+
+                dash.messenger
+                    .send_message(hermes_messaging::Message::new_block(
+                        dash.instance.clone(),
+                        dash.user.clone(),
+                        data.email.clone(),
+                    ))
+                    .await
+                    .unwrap_or_else(|err| {
+                        error!(
+                            msg = "failed to send sender block message",
+                            err = format!("{err}")
+                        );
+                    });
+
+                dash.messenger
+                    .send_message(
+                        hermes_messaging::Message::new_sender_stats(
+                            dash.instance.clone(),
+                            dash.user.clone(),
+                            sender,
+                        )
+                        .unwrap(),
+                    )
+                    .await
+                    .unwrap_or_else(|err| {
+                        error!(
+                            msg = "failed to send sender stats message",
+                            err = format!("{err}")
+                        );
+                    });
+
+                if let Err(err) = Self::send_unblock_request(dash, &data).await {
+                    warn!(
+                        msg = "failed to unblock sender",
+                        sender = data.email,
+                        err = format!("{err}")
+                    );
+                }
+            }
+
+            hermes_messaging::MessageKind::MessengerDisconnect => {
+                let dash = self.dashboard_config.as_mut().unwrap();
+                dash.messenger = dash.messenger.reconnect().await?;
+            }
+            _ => {}
+        };
+
+        Ok(())
+    }
+
     async fn read_messages(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let dash = match &mut self.dashboard_config {
             Some(d) => d,
@@ -299,100 +409,60 @@ impl Mailer {
 
         let messages = dash.messenger.get_new_messages().await?;
 
+        let mut should_pause = false;
         for message in messages {
-            match message.kind {
-                hermes_messaging::MessageKind::SenderResume => {
-                    if let Some(sender) = self.stats.get_mut(&message.data) {
-                        sender.unblock();
-                    }
-                }
-                hermes_messaging::MessageKind::SenderPause => {
-                    if let Some(sender) = self.stats.get_mut(&message.data) {
-                        sender.block();
-                    }
-                }
-                hermes_messaging::MessageKind::Unblock => {
-                    let data: hermes_messaging::UnblockResult =
-                        match serde_json::from_str(&message.data) {
-                            Ok(d) => d,
-                            Err(err) => {
-                                error!(
-                                    msg = "failed to decode unblock message",
-                                    err = format!("{err}")
-                                );
-                                continue;
-                            }
-                        };
+            let kind = message.kind;
+            if should_pause && kind == hermes_messaging::MessageKind::MailerResume {
+                should_pause = false;
+                continue;
+            }
 
-                    if !data.unblock {
+            should_pause = kind == hermes_messaging::MessageKind::MailerPause;
+            if let Err(err) = self.handle_message(message).await {
+                error!(
+                    msg = "failed to handle message",
+                    kind = format!("{:?}", kind),
+                    err = format!("{err}")
+                );
+            }
+        }
+
+        if should_pause {
+            if self.paused {
+                return Ok(());
+            }
+
+            self.paused = true;
+
+            info!(msg = "received pause message. pausing mailer until told to resume.");
+
+            loop {
+                let dash = self.dashboard_config.as_mut().unwrap();
+                let messages = dash.messenger.get_new_messages().await?;
+
+                let mut should_resume = false;
+                for message in messages {
+                    if message.kind == hermes_messaging::MessageKind::MailerResume {
+                        should_resume = true;
                         continue;
                     }
 
-                    let sender = match self.stats.get_mut(&data.email) {
-                        Some(s) => s,
-                        None => continue,
-                    };
-
-                    sender.unblock();
-                    if data.timeout > 0 {
-                        sender.set_timeout(Duration::seconds(data.timeout));
-                    }
-                }
-                hermes_messaging::MessageKind::LocalBlock => {
-                    let data: hermes_messaging::LocalBlockMessage =
-                        serde_json::from_str(&message.data).unwrap();
-
-                    let sender = match self.stats.get_mut(&data.email) {
-                        Some(s) => s,
-                        None => continue,
-                    };
-
-                    sender.block();
-                    sender.inc_bounced(data.bounced);
-
-                    dash.messenger
-                        .send_message(hermes_messaging::Message::new_block(
-                            dash.instance.clone(),
-                            dash.user.clone(),
-                            data.email.clone(),
-                        ))
-                        .await
-                        .unwrap_or_else(|err| {
-                            error!(
-                                msg = "failed to send sender block message",
-                                err = format!("{err}")
-                            );
-                        });
-
-                    dash.messenger
-                        .send_message(
-                            hermes_messaging::Message::new_sender_stats(
-                                dash.instance.clone(),
-                                dash.user.clone(),
-                                sender,
-                            )
-                            .unwrap(),
-                        )
-                        .await
-                        .unwrap_or_else(|err| {
-                            error!(
-                                msg = "failed to send sender stats message",
-                                err = format!("{err}")
-                            );
-                        });
-
-                    if let Err(err) = Self::send_unblock_request(dash, &data).await {
-                        warn!(
-                            msg = "failed to unblock sender",
-                            sender = data.email,
+                    if let Err(err) = Box::pin(self.handle_message(message.clone())).await {
+                        error!(
+                            msg = "failed to handle message",
+                            kind = format!("{:?}", message.kind),
                             err = format!("{err}")
-                        );
+                        )
                     }
                 }
-                hermes_messaging::MessageKind::MessengerDisconnect => {
-                    dash.messenger = dash.messenger.reconnect().await?;
+
+                if should_resume {
+                    info!("received resume message. resuming mailer.");
+                    self.paused = false;
+                    break;
                 }
-                _ => continue,
+
+                thread::sleep(time::Duration::from_secs(1));
             }
         }
 
@@ -400,7 +470,7 @@ impl Mailer {
     }
 
     async fn send_unblock_request(
-        dash: &DashboardConfig,
+        dash: &mut DashboardConfig,
         user: &hermes_messaging::LocalBlockMessage,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let body = hermes_messaging::UnblockRequest {
@@ -428,13 +498,11 @@ impl Mailer {
         self.stats.iter_mut().for_each(|(_, s)| s.reset_daily());
     }
 
-    async fn init_dashboard(&mut self, mutex: Arc<Mutex<()>>) -> Result<(), Error> {
+    async fn init_dashboard(&mut self) -> Result<(), Error> {
         let dash = match &mut self.dashboard_config {
             None => return Ok(()),
             Some(d) => d,
         };
-
-        dash.messenger.set_pause_mutex(mutex);
 
         let tx = dash
             .messenger
@@ -450,8 +518,7 @@ impl Mailer {
     }
 
     pub async fn run(&mut self) -> Result<(), Error> {
-        let pause_mutex = Arc::new(Mutex::new(()));
-        self.init_dashboard(Arc::clone(&pause_mutex)).await?;
+        self.init_dashboard().await?;
 
         let mut cursor = Cursor::new(self.senders.len());
         let (mut sent, mut skips) = (0, 0);
@@ -468,7 +535,6 @@ impl Mailer {
             }
 
             let mut tasks = Vec::with_capacity(self.workers);
-            let guard = pause_mutex.lock().await;
             for _ in 0..self.workers {
                 if self.senders.is_empty() {
                     info!(msg = "sent all emails", total_sent = sent);
@@ -548,7 +614,6 @@ impl Mailer {
                 self.recover_messenger().await;
             }
 
-            drop(guard);
             let _sent = self.collect_tasks(tasks).await;
 
             Span::current().pb_inc(_sent as u64);
@@ -590,8 +655,8 @@ impl Mailer {
             .unwrap_or_else(|e| warn!(msg = "could not save receivers", error = format!("{e}")));
     }
 
-    async fn send_task_stats(&self, sent: usize) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(dash) = &self.dashboard_config {
+    async fn send_task_stats(&mut self, sent: usize) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(dash) = &mut self.dashboard_config {
             dash.messenger
                 .send_message(hermes_messaging::Message::new_task_stats(
                     dash.instance.clone(),

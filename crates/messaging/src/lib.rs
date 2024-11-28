@@ -1,16 +1,13 @@
-use std::sync::Arc;
-
 use amqp::Amqp;
 use futures::Future;
 use serde::{self, Deserialize, Serialize};
-use tokio::sync::Mutex;
 use websocket::WSMessenger;
 
 pub mod amqp;
 pub mod stats;
 pub mod websocket;
 
-#[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MessageKind {
     MessengerDisconnect,
@@ -29,7 +26,7 @@ pub enum MessageKind {
     MailerResume,
 }
 
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SenderType {
     #[default]
@@ -38,7 +35,7 @@ pub enum SenderType {
     User,
 }
 
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     pub data: String,
@@ -136,7 +133,7 @@ where
     fn reconnect(&self) -> impl Future<Output = Result<Self, Box<dyn std::error::Error>>> + Send;
 
     fn send_message(
-        &self,
+        &mut self,
         msg: Message,
     ) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
 
@@ -144,8 +141,6 @@ where
         &self,
         msg: UnblockRequest,
     ) -> impl Future<Output = Result<(), Box<dyn std::error::Error>>> + Send;
-
-    fn set_pause_mutex(&mut self, mutex: Arc<Mutex<()>>);
 }
 
 #[derive(Debug, Deserialize)]
@@ -185,7 +180,7 @@ impl MessengerDispatch for Messenger {
         }
     }
 
-    async fn send_message(&self, msg: Message) -> Result<(), Box<dyn std::error::Error>> {
+    async fn send_message(&mut self, msg: Message) -> Result<(), Box<dyn std::error::Error>> {
         match self {
             Messenger::Amqp(a) => a.send_message(msg).await,
             Messenger::Websocket(ws) => ws.send_message(msg).await,
@@ -199,13 +194,6 @@ impl MessengerDispatch for Messenger {
         match self {
             Messenger::Amqp(a) => a.send_unblock_request(msg).await,
             _ => todo!(),
-        }
-    }
-
-    fn set_pause_mutex(&mut self, mutex: Arc<Mutex<()>>) {
-        match self {
-            Messenger::Amqp(a) => a.set_pause_mutex(mutex),
-            Messenger::Websocket(ws) => ws.set_pause_mutex(mutex),
         }
     }
 }
