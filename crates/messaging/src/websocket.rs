@@ -153,12 +153,9 @@ async fn read_stream(
             }
         };
 
-        match message.kind {
-            MessageKind::Stop => {
-                warn!(msg = "received stop signal from server. stopping task.");
-                process::exit(130);
-            }
-            _ => {}
+        if message.kind == MessageKind::Stop {
+            warn!(msg = "received stop signal from server. stopping task.");
+            process::exit(130);
         }
 
         inbound_tx.send(message).unwrap_or_else(|e| {
