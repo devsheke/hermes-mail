@@ -10,7 +10,6 @@ pub mod websocket;
 #[derive(Clone, Copy, Default, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MessageKind {
-    MessengerDisconnect,
     Block,
     #[default]
     Empty,
@@ -46,13 +45,6 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn new_messenger_disconnect() -> Self {
-        Self {
-            kind: MessageKind::MessengerDisconnect,
-            ..Default::default()
-        }
-    }
-
     pub fn new_block(instance: String, user: String, email: String) -> Self {
         Message {
             data: email,

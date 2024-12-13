@@ -149,13 +149,6 @@ impl Amqp {
                                 lapin::ConnectionState::Error
                                 | lapin::ConnectionState::Closed
                                 | lapin::ConnectionState::Closing => {
-                                    if let Err(err) = tx.send(Message::new_messenger_disconnect()) {
-                                        error!(
-                                            msg =
-                                                "failed to send messenger disconnect notification",
-                                            err = format!("{err}")
-                                        );
-                                    }
                                     return;
                                 }
                                 _ => continue,
@@ -193,16 +186,9 @@ impl Amqp {
             }
         };
 
-        let tx = self.channel.0.clone();
         tokio::spawn(async move {
             pin_mut!(read_stream);
             read_stream.await;
-            if let Err(err) = tx.send(Message::new_messenger_disconnect()) {
-                error!(
-                    msg = "failed to send messenger disconnect notification",
-                    err = format!("{err}")
-                );
-            }
         });
 
         Ok(())
