@@ -393,7 +393,11 @@ impl Mailer {
 
             hermes_messaging::MessageKind::MessengerDisconnect => {
                 let dash = self.dashboard_config.as_mut().unwrap();
-                dash.messenger = dash.messenger.reconnect().await?;
+
+                if dash.messenger.is_closed().await? {
+                    dash.messenger = dash.messenger.reconnect().await?;
+                    info!(msg = "reconnected to messenger hub");
+                }
             }
             _ => {}
         };
@@ -406,6 +410,11 @@ impl Mailer {
             Some(d) => d,
             None => return Ok(()),
         };
+
+        if dash.messenger.is_closed().await? {
+            dash.messenger = dash.messenger.reconnect().await?;
+            info!(msg = "reconnected to messenger hub");
+        }
 
         let messages = dash.messenger.get_new_messages().await?;
 
@@ -438,6 +447,12 @@ impl Mailer {
 
             loop {
                 let dash = self.dashboard_config.as_mut().unwrap();
+
+                if dash.messenger.is_closed().await? {
+                    dash.messenger = dash.messenger.reconnect().await?;
+                    info!(msg = "reconnected to messenger hub");
+                }
+
                 let messages = dash.messenger.get_new_messages().await?;
 
                 let mut should_resume = false;

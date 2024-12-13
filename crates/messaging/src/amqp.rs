@@ -179,12 +179,9 @@ impl Amqp {
                     }
                 };
 
-                match message.kind {
-                    MessageKind::Stop => {
-                        warn!(msg = "received stop signal from server. stopping task.");
-                        process::exit(130);
-                    }
-                    _ => {}
+                if message.kind == MessageKind::Stop {
+                    warn!(msg = "received stop signal from server. stopping task.");
+                    process::exit(130);
                 }
 
                 if let Err(err) = tx.send(message) {
