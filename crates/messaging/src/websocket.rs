@@ -110,12 +110,6 @@ async fn read_stream(
                 }
                 TungsteniteMessage::Close(_) => {
                     warn!(msg = "socket connection closed");
-                    if let Err(err) = inbound_tx.send(Message::new_messenger_disconnect()) {
-                        error!(
-                            msg = "failed to send messenger disconnect notification",
-                            err = format!("{err}")
-                        );
-                    }
                     return;
                 }
                 _ => continue,
@@ -125,12 +119,6 @@ async fn read_stream(
                     tokio_tungstenite::tungstenite::Error::ConnectionClosed
                     | tokio_tungstenite::tungstenite::Error::AlreadyClosed => {
                         warn!(msg = "socket connection closed already");
-                        if let Err(err) = inbound_tx.send(Message::new_messenger_disconnect()) {
-                            error!(
-                                msg = "failed to send messenger disconnect notification",
-                                err = format!("{err}")
-                            );
-                        }
                         return;
                     }
                     _ => {
@@ -183,14 +171,6 @@ impl super::MessengerDispatch for WSMessenger {
         tokio::spawn(async move {
             pin_mut!(write_stream, read_stream);
             future::select(write_stream, read_stream).await;
-
-            warn!(msg = "socket connection closed");
-            if let Err(err) = inbound_tx.send(Message::new_messenger_disconnect()) {
-                error!(
-                    msg = "failed to send messenger disconnect notification",
-                    err = format!("{err}")
-                );
-            }
         });
 
         Ok(self.inbound_tx.clone())
@@ -228,6 +208,7 @@ impl super::MessengerDispatch for WSMessenger {
     }
 
     async fn reconnect(&self) -> Result<Self, Box<dyn std::error::Error>> {
+        info!(msg = "attempting to reconnect to WSMessenger");
         let mut ws = Self::new(self.url.clone());
         ws.connect().await?;
 
