@@ -66,6 +66,7 @@ impl Task {
     }
 
     fn send_email(self, read_receipts: bool) -> TaskResult {
+        return Ok(self);
         let (sender, receiver, empty) =
             (&self.sender, &self.receiver, TemplateVariables::default());
 
