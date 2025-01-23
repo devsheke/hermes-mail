@@ -412,6 +412,12 @@ impl Mailer {
         let mut should_pause = false;
         for message in messages {
             let kind = message.kind;
+
+            info!(
+                msg = "got message from server",
+                kind = serde_json::to_string(&kind).unwrap_or("unknown".to_string())
+            );
+
             if should_pause && kind == hermes_messaging::MessageKind::MailerResume {
                 should_pause = false;
                 continue;
