@@ -1,12 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/cli", "crates/mailer", "crates/csv", "crates/messaging", "crates/logger"]
 
 [workspace.package]
 authors = ["devsheke <abhi@sheke.tech>"]
-description = "A cross-platform, robust and highly configurable mail-transport-agent for the command-line"
-homepage = "https://github.com/devsheke/hermes-mail"
-repository = "https://github.com/devsheke/hermes-mail"
-categories = ["mail-tools", "command-line"]
-license = "Apache-2.0 License"
-rust-version = "1.77.1"
+description = "A lightweight CLI tool for sending bulk emails quickly and securely through SMTP"
+homepage = "https://github.com/devsheke/hermes-mailer"
+repository = "https://github.com/devsheke/hermes-mailer"
+categories = ["mail-tools", "bulk-mailer", "command-line"]
+license = "GPL-3.0"
+rust-version = "1.82.1"
