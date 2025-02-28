@@ -638,6 +638,8 @@ impl Mailer {
                         err = format!("{err}")
                     );
                 };
+
+                info!(msg = "sent emails", number = _sent);
             }
 
             if let Err(err) = self.read_messages().await {
